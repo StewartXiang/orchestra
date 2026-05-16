@@ -1,0 +1,13 @@
+{
+  "title": "Agent Orchestra — Agents",
+  "uid": "orchestra-agents",
+  "schemaVersion": 38,
+  "tags": ["orchestra", "agent"],
+  "panels": [
+    {"id": 1, "type": "stat",       "title": "Agent 状态",         "targets": [{"expr": "agent_status"}]},
+    {"id": 2, "type": "timeseries", "title": "心跳延迟",           "targets": [{"expr": "agent_heartbeat_lag_seconds"}]},
+    {"id": 3, "type": "timeseries", "title": "并发占用",           "targets": [{"expr": "agent_busy_slots"}]},
+    {"id": 4, "type": "timeseries", "title": "LLM token / 分钟",   "targets": [{"expr": "rate(llm_tokens_consumed_total[1m])"}]},
+    {"id": 5, "type": "timeseries", "title": "LLM 累计成本（USD）", "targets": [{"expr": "agent_llm_cost_usd_total"}]}
+  ]
+}

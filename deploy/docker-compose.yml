@@ -1,0 +1,107 @@
+version: "3.9"
+
+# Agent Orchestra 单机部署
+# 起步用 SQLite 持久化（PERSISTENCE_DRIVER=sqlite），>50 并发 Workflow 时切换 PostgreSQL。
+
+x-worker-base: &worker-base
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile.worker
+  depends_on:
+    temporal-server:
+      condition: service_healthy
+  environment:
+    TEMPORAL_HOST: temporal-server:7233
+    TEMPORAL_NAMESPACE: ${ORCHESTRA_NAMESPACE:-default}
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+    PROMETHEUS_PORT: "9100"
+    LOG_LEVEL: ${LOG_LEVEL:-info}
+  restart: unless-stopped
+
+services:
+
+  # ---------- Temporal 控制面 ----------
+  temporal-server:
+    image: temporalio/auto-setup:1.24
+    environment:
+      DB: sqlite
+      SQLITE_PRAGMA_JOURNAL_MODE: WAL
+      SKIP_DB_CREATE: "false"
+      DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/dynamicconfig/development-sql.yaml
+    ports: ["7233:7233"]
+    volumes:
+      - temporal-data:/etc/temporal/sqlite
+    healthcheck:
+      test: ["CMD", "tctl", "--address", "temporal-server:7233", "cluster", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  temporal-ui:
+    image: temporalio/ui:2.27
+    environment:
+      TEMPORAL_ADDRESS: temporal-server:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:8080
+    ports: ["8080:8080"]
+    depends_on:
+      temporal-server:
+        condition: service_healthy
+
+  # ---------- 可观测层 ----------
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+    ports: ["9090:9090"]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yaml:/etc/prometheus/alerts.yaml:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on: [prometheus]
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.97.0
+    command: ["--config=/etc/otel/config.yaml"]
+    ports:
+      - "4317:4317"  # OTLP gRPC
+      - "4318:4318"  # OTLP HTTP
+    volumes:
+      - ./otel-collector.yaml:/etc/otel/config.yaml:ro
+
+  # ---------- 幂等键 / 缓存 ----------
+  redis:
+    image: redis:7.2-alpine
+    ports: ["6379:6379"]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+
+  # ---------- Agent Workers（9 个 profile） ----------
+  worker-walnut:     {<<: *worker-base, environment: {PROFILE_NAME: walnut,     MCP_ENDPOINT: "mcp://host.docker.internal:18761"}}
+  worker-almond:     {<<: *worker-base, environment: {PROFILE_NAME: almond,     MCP_ENDPOINT: "mcp://host.docker.internal:18762"}}
+  worker-chestnut:   {<<: *worker-base, environment: {PROFILE_NAME: chestnut,   MCP_ENDPOINT: "mcp://host.docker.internal:18763"}}
+  worker-coconut:    {<<: *worker-base, environment: {PROFILE_NAME: coconut,    MCP_ENDPOINT: "mcp://host.docker.internal:18764"}}
+  worker-cherry:     {<<: *worker-base, environment: {PROFILE_NAME: cherry,     MCP_ENDPOINT: "mcp://host.docker.internal:18765"}}
+  worker-mango:      {<<: *worker-base, environment: {PROFILE_NAME: mango,      MCP_ENDPOINT: "mcp://host.docker.internal:18766"}}
+  worker-strawberry: {<<: *worker-base, environment: {PROFILE_NAME: strawberry, MCP_ENDPOINT: "mcp://host.docker.internal:18767"}}
+  worker-blueberry:  {<<: *worker-base, environment: {PROFILE_NAME: blueberry,  MCP_ENDPOINT: "mcp://host.docker.internal:18768"}}
+  worker-grape:      {<<: *worker-base, environment: {PROFILE_NAME: grape,      MCP_ENDPOINT: "mcp://host.docker.internal:18769"}}
+
+volumes:
+  temporal-data:
+  prometheus-data:
+  grafana-data:
+  redis-data:

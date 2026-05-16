@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orchestra.io/schema/v1/pipeline-run.schema.json",
+  "title": "PipelineRun",
+  "description": "对一个 Pipeline 定义的一次具体执行实例。引用 Pipeline 并提供运行时参数与触发上下文。",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "unevaluatedProperties": false,
+  "properties": {
+    "apiVersion": {"type": "string", "const": "orchestra.io/v1"},
+    "kind": {"type": "string", "const": "PipelineRun"},
+    "metadata": {
+      "type": "object",
+      "required": ["name", "namespace"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$"},
+        "namespace": {"type": "string", "pattern": "^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$"},
+        "labels": {"type": "object", "additionalProperties": {"type": "string"}},
+        "annotations": {"type": "object", "additionalProperties": {"type": "string"}}
+      }
+    },
+    "spec": {
+      "type": "object",
+      "required": ["pipelineRef"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "pipelineRef": {
+          "type": "object",
+          "required": ["name"],
+          "unevaluatedProperties": false,
+          "properties": {
+            "name": {"type": "string"},
+            "namespace": {"type": "string"},
+            "version": {"type": "string"}
+          }
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": {"oneOf": [{"type": "string"}, {"type": "number"}, {"type": "boolean"}]}
+        },
+        "trigger": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "properties": {
+            "kind": {"type": "string", "enum": ["manual", "schedule", "webhook", "signal", "api"]},
+            "actor": {"type": "string"},
+            "source": {"type": "string"},
+            "ref": {"type": "string"}
+          }
+        },
+        "priority": {"type": "string", "enum": ["low", "normal", "high", "critical"]},
+        "idempotencyKey": {"type": "string"}
+      }
+    },
+    "status": {
+      "type": "object",
+      "description": "只读，由引擎维护",
+      "unevaluatedProperties": false,
+      "properties": {
+        "phase": {"type": "string", "enum": ["Pending", "Running", "Paused", "Succeeded", "Failed", "Cancelled", "Compensating"]},
+        "workflowId": {"type": "string"},
+        "runId": {"type": "string"},
+        "startedAt": {"type": "string", "format": "date-time"},
+        "completedAt": {"type": "string", "format": "date-time"},
+        "stages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {"type": "string"},
+              "phase": {"type": "string", "enum": ["Pending", "Running", "Succeeded", "Failed", "Skipped", "Cancelled"]},
+              "attempts": {"type": "integer"},
+              "startedAt": {"type": "string", "format": "date-time"},
+              "completedAt": {"type": "string", "format": "date-time"},
+              "agent": {"type": "string"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

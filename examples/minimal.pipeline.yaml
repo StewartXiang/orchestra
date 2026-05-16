@@ -1,0 +1,72 @@
+apiVersion: orchestra.io/v1
+kind: Pipeline
+metadata:
+  name: minimal-pipeline
+  namespace: default
+  version: 0.1.0
+  labels:
+    purpose: smoke-test
+spec:
+  description: "最简流水线：design → code 两 stage 线性链，用于回归测试 Schema/DAG 解析与 Worker 心跳"
+
+  agents:
+    walnut:
+      role: developer
+      capabilities: [python]
+      mcpEndpoint: "mcp://localhost:18761"
+      tools: [file_read, file_write]
+      maxConcurrency: 1
+      livenessProbe:
+        heartbeatInterval: 15s
+        gracePeriod: 45s
+      retry:
+        maxAttempts: 2
+        backoff: exponential
+        initialInterval: 10s
+        maxInterval: 1m
+
+    almond:
+      role: tester
+      capabilities: [python, pytest]
+      mcpEndpoint: "mcp://localhost:18762"
+      tools: [pytest_run, file_read]
+      maxConcurrency: 1
+      livenessProbe:
+        heartbeatInterval: 15s
+        gracePeriod: 45s
+
+  pipeline:
+    stages:
+      - name: code
+        agent: walnut
+        input: "$.params.task"
+        output: "$.code.patch"
+        timeouts:
+          startToClose: 10m
+          heartbeat: 30s
+        retry:
+          maxAttempts: 2
+
+      - name: test
+        agent: almond
+        dependsOn: [code]
+        input: "$.code.patch"
+        output: "$.test.result"
+        timeouts:
+          startToClose: 5m
+          heartbeat: 30s
+
+  parameters:
+    - name: task
+      type: string
+      required: true
+      description: "需要实现的任务描述"
+
+  global:
+    heartbeatInterval: 15s
+    maxConcurrency: 2
+    timeouts:
+      workflowExecution: 1h
+    retention:
+      historyDays: 7
+      artifactsDays: 1

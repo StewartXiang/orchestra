@@ -1,0 +1,60 @@
+# Capability / Role 词表（schema 校验时引用）
+# 任何 Pipeline / Profile 中的 capability 字符串必须出现在此词表内，否则 schema 校验失败。
+# 新增 capability 必须先在此处声明 + 简介，再去 profile / pipeline 引用。
+
+apiVersion: orchestra.io/v1
+kind: CapabilityRegistry
+
+roles:
+  developer:    "编写代码"
+  tester:       "执行测试 / 校验"
+  designer:     "UI / 视觉资产产出"
+  ci_engineer:  "构建 / 部署 / 基础设施"
+  chat:         "聊天 / 摘要 / 沟通"
+  standby:      "通用兜底"
+
+capabilities:
+  # 编程语言 / 运行时
+  python:       "Python 3.11+ 编程"
+  gdscript:     "Godot GDScript"
+  shader:       "GLSL / HLSL shader 编写"
+
+  # 框架 / 工具
+  godot:        "Godot 4 引擎工程操作"
+  fastapi:      "FastAPI / Starlette 后端"
+  async:        "asyncio / 异步编程"
+  pytest:       "pytest 单元测试"
+  coverage:     "代码覆盖率测量"
+  playwright:   "Playwright 浏览器自动化"
+  figma:        "Figma 设计稿读写 / 导出"
+
+  # 协作 / 项目
+  git:          "Git 提交 / 推送 / 分支"
+  ci:           "CI 流水线编辑"
+  docker:       "Dockerfile / docker compose"
+  k8s:          "Kubernetes 资源声明 / kubectl"
+  terraform:    "Terraform 基础设施声明"
+  deploy:       "应用发布 / 灰度 / 回滚"
+
+  # 测试领域
+  ui-test:      "UI 层端到端测试"
+  e2e:          "端到端测试"
+  screenshot:   "截图比对"
+
+  # Web / 网络
+  web:          "Web 后端 / API 实现"
+
+  # 设计 / 资产
+  ui-design:    "UI 设计 / 交互稿"
+  asset-export: "美术资产导出 / 切图"
+
+  # 玩法
+  gameplay:     "游戏玩法 / 战斗 / AI"
+
+  # 通用
+  chat:         "对话能力"
+  summarize:    "摘要 / 提炼"
+  translate:    "翻译"
+  analyze:      "分析 / 报告"
+  fallback:     "兜底处理"
+  generic:      "未分类通用任务"

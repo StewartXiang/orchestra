@@ -1,0 +1,224 @@
+apiVersion: orchestra.io/v1
+kind: Pipeline
+metadata:
+  name: game-dev-pipeline
+  namespace: abyss-chess
+  version: 1.2.0
+  labels:
+    project: abyss-chess
+    env: prod
+    type: game-dev
+  annotations:
+    owner: "taoer@example.com"
+    docs: "https://wiki/pipelines/game-dev"
+
+spec:
+  description: |
+    AbyssChess 游戏开发流水线：GDD 评审 → 设计 → 并行（开发 + 美术）→ 测试 →
+    动态修复每个 bug → UI 双视角并行验证 → 审批 → CI/CD 部署。
+    覆盖：condition / 并行 / fan-in / 审批 / 补偿 / 动态 for_each / cache / artifacts
+
+  agents:
+    walnut:
+      role: developer
+      capabilities: [python, godot, gdscript, git]
+      mcpEndpoint: "mcp://localhost:18761"
+      tools: [godot_edit, file_read, file_write, git_commit, git_push, shell_run]
+      maxConcurrency: 2
+      resources:
+        requests: {memory: "2Gi", cpu: "500m"}
+        limits: {memory: "4Gi", cpu: "2000m", tokensPerMinute: 100000}
+      startupProbe: {endpoint: "mcp://localhost:18761/health", initialDelay: 10s, periodSeconds: 5s, failureThreshold: 6}
+      readinessProbe: {endpoint: "mcp://localhost:18761/health", periodSeconds: 30s, timeout: 5s, failureThreshold: 3}
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+      retry:
+        maxAttempts: 3
+        backoff: exponential
+        initialInterval: 10s
+        maxInterval: 5m
+        coefficient: 2.0
+        nonRetryableErrors: [AuthError, ToolNotAllowed, InvalidInput, SchemaViolation]
+
+    mango:
+      role: developer
+      capabilities: [godot, gdscript, shader]
+      mcpEndpoint: "mcp://localhost:18766"
+      tools: [godot_edit, file_read, file_write, shader_compile]
+      maxConcurrency: 2
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    almond:
+      role: tester
+      capabilities: [python, pytest]
+      mcpEndpoint: "mcp://localhost:18762"
+      tools: [pytest_run, shell_run]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    strawberry:
+      role: tester
+      capabilities: [playwright, ui-test]
+      mcpEndpoint: "mcp://localhost:18767"
+      tools: [playwright_run, screenshot_compare]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    grape:
+      role: standby
+      capabilities: [playwright, ui-test, generic]
+      mcpEndpoint: "mcp://localhost:18769"
+      tools: [playwright_run, screenshot_compare]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    cherry:
+      role: designer
+      capabilities: [ui-design, asset-export]
+      mcpEndpoint: "mcp://localhost:18765"
+      tools: [figma_export, image_process]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    coconut:
+      role: ci_engineer
+      capabilities: [docker, deploy, k8s]
+      mcpEndpoint: "mcp://localhost:18764"
+      tools: [docker_run, kubectl_apply, deploy_action]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    blueberry:
+      role: chat
+      capabilities: [chat, summarize]
+      mcpEndpoint: "mcp://localhost:18768"
+      tools: [summarize]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+  pipeline:
+    stages:
+
+      - name: design-review
+        agent: blueberry
+        input: "$.params.gdd"
+        output: "$.gdd"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+
+      - name: code
+        agent: walnut
+        dependsOn: [design-review]
+        input: "$.gdd.task"
+        output:
+          path: "$.code.patch"
+          storage: reference
+        timeouts: {startToClose: 30m, heartbeat: 30s, scheduleToStart: 1m}
+        cache:
+          key: "{{ inputs.gdd.task | sha256 }}"
+          ttl: 24h
+          enabled: true
+        sideEffects: [git, fs]
+        idempotencyKey: "{{ pipelineId }}-code"
+        artifacts:
+          - {name: game_build, path: "/opt/godot/projects/AbyssChess/build/", type: directory, retention: 7d, compress: true, hash: sha256}
+
+      - name: art
+        agent: cherry
+        dependsOn: [design-review]
+        condition: "gdd.has_ui_change"
+        input: "$.gdd.ui_spec"
+        output: "$.art.assets"
+        timeouts: {startToClose: 20m, heartbeat: 30s}
+        artifacts:
+          - {name: ui_assets, path: "/opt/assets/ui/", type: directory, retention: 30d}
+
+      - name: test
+        agent: almond
+        dependsOn: [code, art]
+        input: "$.code.patch"
+        output: "$.test.result"
+        inputSchema: {type: object, required: [patch]}
+        outputSchema: {type: object, required: [result, coverage]}
+        timeouts: {startToClose: 15m, heartbeat: 30s, scheduleToClose: 30m}
+
+      - name: diagnose
+        agent: blueberry
+        dependsOn: [test]
+        condition: 'test.result != "pass"'
+        input: "$.test"
+        output: "$.diagnosis"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      - name: fix-each
+        dependsOn: [diagnose]
+        condition: 'size(diagnosis.bugs) > 0'
+        dynamic:
+          generator: for_each
+          input: "$.diagnosis.bugs"
+          maxParallel: 3
+          maxItems: 50
+          onItemFailure: continue
+          aggregateOutput: "$.fixes"
+          template:
+            name: "fix-bug-{{ item.id }}"
+            agent: walnut
+            input: "$.item"
+            output: "$.fix"
+            timeouts: {startToClose: 10m, heartbeat: 30s}
+
+      - name: ui-verify
+        agentSelector: {role: tester, capabilities: [playwright, ui-test]}
+        agents: [strawberry, grape]
+        dependsOn: [test, fix-each]
+        input: "$.code.patch"
+        output: "$.ui.result"
+        aggregateStrategy: vote
+        timeouts: {startToClose: 20m, heartbeat: 30s}
+
+      - name: deploy-approval
+        dependsOn: [ui-verify]
+        approval:
+          approvers: ["ou_xxx", "ou_yyy"]
+          policy: any
+          message: "CI 通过，是否部署到生产？"
+          timeout: 1h
+          onTimeout: reject
+          escalateTo: "ou_manager"
+          reminderInterval: 15m
+          contextFields: ["$.ui.result", "$.test.coverage"]
+
+      - name: deploy
+        agent: coconut
+        dependsOn: [deploy-approval]
+        input: "$.code.patch"
+        output: "$.deploy"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+        sideEffects: [deploy, network]
+        idempotencyKey: "{{ pipelineId }}-deploy"
+        retry: {maxAttempts: 1}
+        onFailure: compensate
+
+    compensation:
+      strategy: reverse
+      maxCompensationAttempts: 2
+      onCompensationFailure: alert
+      actions:
+        - {forStage: deploy, agent: coconut, action: rollback, runOn: any_failure}
+
+  parameters:
+    - {name: gdd, type: string, required: true, description: "Game Design Document 路径或链接"}
+
+  secrets:
+    - {name: llm-api-key, fromEnv: LLM_API_KEY}
+    - {name: deploy-token, fromFile: "/etc/orchestra/secrets/deploy-token"}
+
+  global:
+    heartbeatInterval: 15s
+    maxConcurrency: 4
+    timeouts:
+      workflowExecution: 4h
+      activityDefault: 30m
+    notification:
+      channels: [feishu]
+      target: "ou_xxx"
+      onEvents: [failed, approval_pending, succeeded]
+    artifactsBasePath: "/opt/agent-orchestra/artifacts"
+    priority: high
+    retention:
+      historyDays: 30
+      artifactsDays: 7
+      successfulRunsKeep: 100
+      failedRunsKeep: 50

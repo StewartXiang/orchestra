@@ -1,0 +1,13 @@
+{
+  "title": "Agent Orchestra — System",
+  "uid": "orchestra-system",
+  "schemaVersion": 38,
+  "tags": ["orchestra", "system"],
+  "panels": [
+    {"id": 1, "type": "stat",       "title": "Worker 存活数",     "targets": [{"expr": "sum(temporal_worker_alive)"}]},
+    {"id": 2, "type": "timeseries", "title": "Task Queue 深度",   "targets": [{"expr": "task_queue_depth"}]},
+    {"id": 3, "type": "timeseries", "title": "Task Queue 等待延迟", "targets": [{"expr": "task_queue_latency"}]},
+    {"id": 4, "type": "timeseries", "title": "Event History 大小", "targets": [{"expr": "temporal_event_history_size"}]},
+    {"id": 5, "type": "timeseries", "title": "Replay 失败计数",    "targets": [{"expr": "increase(pipeline_replay_failure_total[1h])"}]}
+  ]
+}

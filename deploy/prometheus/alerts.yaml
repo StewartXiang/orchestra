@@ -1,0 +1,73 @@
+groups:
+  - name: orchestra
+    interval: 30s
+    rules:
+
+      - alert: AgentDown
+        expr: agent_heartbeat_lag_seconds > 60
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "Agent {{ $labels.profile }} 心跳超过 60s"
+          runbook: "/runbook/01-agent-heartbeat-flap.md"
+
+      - alert: PipelineHighFailureRate
+        expr: rate(pipeline_runs_total{status="failed"}[5m]) / rate(pipeline_runs_total[5m]) > 0.2
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "流水线 {{ $labels.name }} 失败率 > 20%"
+
+      - alert: TaskQueueBacklog
+        expr: task_queue_depth > 20
+        for: 3m
+        labels: {severity: warning}
+        annotations:
+          summary: "Task Queue {{ $labels.queue }} 积压"
+          runbook: "/runbook/03-task-queue-backlog.md"
+
+      - alert: ApprovalPending
+        expr: approval_pending_total > 0 and (time() - approval_started_at_seconds) > 1800
+        for: 5m
+        labels: {severity: info}
+        annotations:
+          summary: "审批 {{ $labels.pipeline }} 等待 > 30min"
+          runbook: "/runbook/04-approval-pending.md"
+
+      - alert: TemporalServerDown
+        expr: up{job="temporal"} == 0
+        for: 30s
+        labels: {severity: critical}
+
+      - alert: EventHistoryNearLimit
+        expr: temporal_event_history_size > 40000
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: "Workflow {{ $labels.workflow_id }} 接近 50K event 限制"
+          runbook: "/runbook/05-state-too-large.md"
+
+      - alert: StateOversize
+        expr: pipeline_state_size_bytes > 10485760
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          runbook: "/runbook/05-state-too-large.md"
+
+      - alert: LLMCostBudgetExceeded
+        expr: increase(llm_tokens_consumed_total[1h]) * 0.000005 > 50
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          runbook: "/runbook/06-llm-quota-exhausted.md"
+
+      - alert: WorkflowReplayFailure
+        expr: increase(pipeline_replay_failure_total[5m]) > 0
+        labels: {severity: critical}
+        annotations:
+          runbook: "/runbook/02-replay-failure.md"
+
+      - alert: StageFailureSpike
+        expr: rate(stage_failure_total[5m]) > 0.1
+        for: 5m
+        labels: {severity: warning}

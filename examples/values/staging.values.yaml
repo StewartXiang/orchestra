@@ -1,0 +1,4 @@
+# Staging 环境 values
+target_env: staging
+replicas: 2
+skip_tests: false

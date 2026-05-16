@@ -1,0 +1,4 @@
+# 生产环境 values
+target_env: prod
+replicas: 5
+skip_tests: false

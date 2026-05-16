@@ -1,0 +1,47 @@
+apiVersion: orchestra.io/v1
+kind: Pipeline
+metadata:
+  name: parameterized-deploy
+  namespace: shared
+  version: 1.0.0
+  labels:
+    type: deploy
+
+spec:
+  description: "演示参数化：同一份 YAML，通过 --param 或 values 文件区分多环境部署"
+
+  agents:
+    coconut:
+      role: ci_engineer
+      capabilities: [docker, deploy, k8s]
+      mcpEndpoint: "mcp://localhost:18764"
+      tools: [docker_run, kubectl_apply, deploy_action]
+
+  pipeline:
+    stages:
+      - name: build
+        agent: coconut
+        input: "$.params"
+        output: "$.build"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+
+      - name: deploy
+        agent: coconut
+        dependsOn: [build]
+        condition: '!params.skip_tests'
+        input:
+          target: "{{ params.target_env }}"
+          replicas: "{{ params.replicas }}"
+        output: "$.deploy"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+        sideEffects: [deploy]
+
+  parameters:
+    - {name: target_env, type: string, default: staging, enum: [dev, staging, prod], description: "部署目标环境"}
+    - {name: replicas,   type: integer, default: 2, description: "副本数"}
+    - {name: skip_tests, type: boolean, default: false, description: "是否跳过测试"}
+
+  global:
+    heartbeatInterval: 15s
+    timeouts:
+      workflowExecution: 1h

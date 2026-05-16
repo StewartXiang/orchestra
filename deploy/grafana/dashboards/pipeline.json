@@ -1,0 +1,16 @@
+{
+  "title": "Agent Orchestra — Pipelines",
+  "uid": "orchestra-pipelines",
+  "schemaVersion": 38,
+  "tags": ["orchestra", "pipeline"],
+  "timezone": "browser",
+  "time": {"from": "now-6h", "to": "now"},
+  "refresh": "30s",
+  "panels": [
+    {"id": 1, "type": "timeseries", "title": "Pipeline 启动 / 成功 / 失败 速率", "targets": [{"expr": "sum by (status) (rate(pipeline_runs_total[5m]))"}]},
+    {"id": 2, "type": "timeseries", "title": "Pipeline P95 时长", "targets": [{"expr": "histogram_quantile(0.95, sum by (le, name) (rate(pipeline_duration_seconds_bucket[5m])))"}]},
+    {"id": 3, "type": "stat",       "title": "当前活跃 Pipeline", "targets": [{"expr": "sum(pipeline_active)"}]},
+    {"id": 4, "type": "table",      "title": "Stage 失败 Top10",  "targets": [{"expr": "topk(10, sum by (stage, reason) (increase(stage_failure_total[1h])))"}]},
+    {"id": 5, "type": "timeseries", "title": "审批等待数",        "targets": [{"expr": "approval_pending_total"}]}
+  ]
+}

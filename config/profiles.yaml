@@ -1,0 +1,97 @@
+apiVersion: orchestra.io/v1
+kind: AgentProfileSet
+
+# 9 个具体 Agent profile（核桃...葡萄）
+# Pipeline YAML 中可通过 `agent: walnut` 直接绑定，
+# 也可通过 `agentSelector: { role: developer, capabilities: [godot] }` 按能力路由。
+profiles:
+
+  walnut:
+    role: developer
+    capabilities: [python, godot, gdscript, git]
+    mcpEndpoint: "mcp://localhost:18761"
+    model: deepseek-v4-pro
+    tools: [godot_edit, file_read, file_write, git_commit, git_push, shell_run]
+    labels: {team: core, language: python}
+    maxConcurrency: 2
+    description: "核桃 — 主力游戏开发"
+
+  almond:
+    role: tester
+    capabilities: [python, pytest, coverage, playwright]
+    mcpEndpoint: "mcp://localhost:18762"
+    model: deepseek-v4-pro
+    tools: [pytest_run, file_read, shell_run, http_request]
+    labels: {team: qa}
+    maxConcurrency: 2
+    description: "杏仁 — 单元 / 集成测试"
+
+  chestnut:
+    role: developer
+    capabilities: [python, web, fastapi, async]
+    mcpEndpoint: "mcp://localhost:18763"
+    model: deepseek-v4-pro
+    tools: [file_read, file_write, git_commit, shell_run, http_request]
+    labels: {team: backend}
+    maxConcurrency: 2
+    description: "栗子 — 后端 / API 开发"
+
+  coconut:
+    role: ci_engineer
+    capabilities: [docker, deploy, k8s, terraform, ci]
+    mcpEndpoint: "mcp://localhost:18764"
+    model: deepseek-v4-pro
+    tools: [docker_run, kubectl_apply, deploy_action, shell_run]
+    labels: {team: platform}
+    maxConcurrency: 1
+    description: "椰子 — 部署与基础设施"
+
+  cherry:
+    role: designer
+    capabilities: [ui-design, figma, asset-export]
+    mcpEndpoint: "mcp://localhost:18765"
+    model: deepseek-v4-pro
+    tools: [figma_export, file_read, file_write, image_process]
+    labels: {team: design}
+    maxConcurrency: 1
+    description: "樱桃 — UI / 视觉设计"
+
+  mango:
+    role: developer
+    capabilities: [godot, gdscript, shader, gameplay]
+    mcpEndpoint: "mcp://localhost:18766"
+    model: deepseek-v4-pro
+    tools: [godot_edit, file_read, file_write, shader_compile]
+    labels: {team: gameplay}
+    maxConcurrency: 2
+    description: "芒果 — 玩法与图形"
+
+  strawberry:
+    role: tester
+    capabilities: [playwright, ui-test, e2e, screenshot]
+    mcpEndpoint: "mcp://localhost:18767"
+    model: deepseek-v4-pro
+    tools: [playwright_run, screenshot_compare, http_request]
+    labels: {team: qa}
+    maxConcurrency: 1
+    description: "草莓 — 端到端 / UI 测试"
+
+  blueberry:
+    role: chat
+    capabilities: [chat, summarize, translate, analyze]
+    mcpEndpoint: "mcp://localhost:18768"
+    model: deepseek-v4-pro
+    tools: [file_read, http_request, summarize]
+    labels: {team: ops}
+    maxConcurrency: 4
+    description: "蓝莓 — 沟通与摘要"
+
+  grape:
+    role: standby
+    capabilities: [generic, fallback]
+    mcpEndpoint: "mcp://localhost:18769"
+    model: deepseek-v4-pro
+    tools: [file_read, file_write, shell_run]
+    labels: {team: ops}
+    maxConcurrency: 2
+    description: "葡萄 — 备用 / 通用兜底"

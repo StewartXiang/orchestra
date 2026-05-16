@@ -1,0 +1,651 @@
+# DETERMINISM REQUIRED — see CLAUDE.md §3
+"""PipelineWorkflow — 主 Workflow 定义。
+
+⚠️ 绝对禁止：time.now / random / 文件IO / 网络IO / 全局可变状态
+   参见 CLAUDE.md §3 确定性铁律
+
+信号：cancel / pause / resume / override
+查询：get_progress / get_dag_status / get_approval_status / get_state_size
+更新：approve / reject（Temporal 1.21+，带返回值校验）
+"""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, field
+from datetime import timedelta
+from typing import Any
+
+from temporalio import workflow
+from temporalio.common import RetryPolicy
+
+with workflow.unsafe.imports_passed_through():
+    from ..activities.agent_task import AgentTaskInput, execute_agent_task
+    from ..activities.audit import AuditInput, write_audit_log
+    from ..activities.compensation import CompensationInput, run_compensation
+    from ..activities.notification import NotificationInput, send_notification
+    from ..domain.enums import OnFailure, Phase, StagePhase
+    from ..domain.pipeline import Compensation, GlobalSpec, Pipeline, Stage
+    from ..domain.state import StageOutput, TaskInput
+    from ..schema.dag import DagValidationResult, parallel_groups, topological_order
+    from ..workflows.queries import ApprovalStatusQuery, DagStatusQuery, ProgressQuery, StateSizeQuery
+    from ..workflows.signals import ApproveUpdate, CancelSignal, OverrideSignal, PauseSignal, RejectUpdate, ResumeSignal
+    from ..workflows.updates import ApproveResult, RejectResult
+
+
+@dataclass
+class PipelineRunInput:
+    """Workflow 入口参数。
+
+    注意：pipeline 字段存为 dict（JSON 序列化后传给 Temporal），
+    避免 Pydantic alias 字段在 Temporal 反序列化时出错。
+    Workflow 内部调用 _parse_pipeline(pipeline_dict) 还原为 Pipeline 对象。
+    """
+    pipeline_dict: dict[str, Any]   # Pipeline.model_dump(by_alias=True)
+    run_id: str
+    params: dict[str, Any] = field(default_factory=dict)
+    actor: str = "system"
+    traceparent: str | None = None
+
+    # continue_as_new 结转时的已有状态
+    carry_state: dict[str, Any] = field(default_factory=dict)
+    completed_stages: list[str] = field(default_factory=list)
+    stage_statuses: dict[str, str] = field(default_factory=dict)
+    completed_count: int = 0
+
+
+@workflow.defn
+class PipelineWorkflow:
+    """AI Agent 流水线主 Workflow。"""
+
+    # ---------- 实例状态（只在 @workflow.run 内修改）----------
+    def __init__(self) -> None:
+        self._phase: Phase = Phase.PENDING
+        self._current_stage: str = ""
+        self._stage_statuses: dict[str, StagePhase] = {}
+        self._state: dict[str, Any] = {}
+        self._approval_state: dict[str, dict[str, Any]] = {}
+        self._cancelled: bool = False
+        self._paused: bool = False
+        self._completed_count: int = 0
+
+    # ---------- Signals ----------
+
+    @workflow.signal
+    async def cancel(self, sig: CancelSignal) -> None:
+        self._cancelled = True
+
+    @workflow.signal
+    async def pause(self, sig: PauseSignal) -> None:
+        self._paused = True
+
+    @workflow.signal
+    async def resume(self, sig: ResumeSignal) -> None:
+        self._paused = False
+
+    @workflow.signal
+    async def override(self, sig: OverrideSignal) -> None:
+        self._state[sig.key] = sig.value
+
+    # ---------- Updates（Temporal 1.21+）----------
+
+    @workflow.update
+    async def approve(self, upd: ApproveUpdate) -> ApproveResult:
+        """同步审批：校验 + 更新状态 + 返回结果。"""
+        stage_name = upd.stage_name
+        if stage_name not in self._approval_state:
+            raise ValueError(f"stage '{stage_name}' 不需要审批或不存在")
+        if self._approval_state[stage_name].get("status") != "pending":
+            raise ValueError(f"stage '{stage_name}' 审批状态不是 pending")
+
+        self._approval_state[stage_name]["approvals"].append({
+            "approver": upd.approver,
+            "timestamp": str(workflow.now()),
+        })
+        # 检查是否达到 policy 要求
+        approval = self._get_stage_approval(stage_name)
+        if approval and self._check_approval_policy(stage_name, approval):
+            self._approval_state[stage_name]["status"] = "approved"
+
+        return ApproveResult(approved_at=str(workflow.now()), approver=upd.approver)
+
+    @workflow.update
+    async def reject(self, upd: RejectUpdate) -> RejectResult:
+        stage_name = upd.stage_name
+        if stage_name not in self._approval_state:
+            raise ValueError(f"stage '{stage_name}' 不需要审批或不存在")
+        self._approval_state[stage_name]["status"] = "rejected"
+        self._approval_state[stage_name]["reject_reason"] = upd.reason
+        return RejectResult(rejected_at=str(workflow.now()), approver=upd.approver, reason=upd.reason)
+
+    # ---------- Queries ----------
+
+    @workflow.query
+    def get_progress(self) -> ProgressQuery:
+        return ProgressQuery(stage=self._current_stage, phase=self._phase.value, progress=0)
+
+    @workflow.query
+    def get_dag_status(self) -> DagStatusQuery:
+        completed = [n for n, s in self._stage_statuses.items() if s == StagePhase.SUCCEEDED]
+        running = [n for n, s in self._stage_statuses.items() if s == StagePhase.RUNNING]
+        pending = [n for n, s in self._stage_statuses.items() if s == StagePhase.PENDING]
+        skipped = [n for n, s in self._stage_statuses.items() if s == StagePhase.SKIPPED]
+        failed = [n for n, s in self._stage_statuses.items() if s == StagePhase.FAILED]
+        return DagStatusQuery(completed=completed, running=running, pending=pending, skipped=skipped, failed=failed)
+
+    @workflow.query
+    def get_approval_status(self, stage_name: str = "") -> ApprovalStatusQuery:
+        if stage_name and stage_name in self._approval_state:
+            a = self._approval_state[stage_name]
+            return ApprovalStatusQuery(
+                stage_name=stage_name,
+                status=a.get("status", "pending"),
+                approvers=a.get("approvals", []),
+            )
+        return ApprovalStatusQuery(stage_name=stage_name, status="not_required")
+
+    @workflow.query
+    def get_state_size(self) -> StateSizeQuery:
+        import json
+        size = len(json.dumps(self._state).encode())
+        return StateSizeQuery(size_bytes=size, warning=size > 10_000_000)
+
+    # ---------- Main ----------
+
+    @workflow.run
+    async def run(self, inp: PipelineRunInput) -> dict[str, Any]:
+        # 还原 Pipeline 对象（从 dict，避免 Temporal 反序列化 Pydantic alias 问题）
+        with workflow.unsafe.imports_passed_through():
+            from ..schema.parser import parse_pipeline
+        pipeline = parse_pipeline(inp.pipeline_dict)
+        spec = pipeline.spec
+        stages = spec.pipeline.stages
+        namespace = pipeline.metadata.name
+
+        # 恢复 continue_as_new 结转状态
+        self._state = inp.carry_state or {"params": inp.params}
+        self._completed_count = inp.completed_count
+        self._stage_statuses = {
+            name: StagePhase(status)
+            for name, status in inp.stage_statuses.items()
+        }
+        for stage in stages:
+            if stage.name not in self._stage_statuses:
+                self._stage_statuses[stage.name] = StagePhase.PENDING
+
+        self._phase = Phase.RUNNING
+
+        try:
+            await self._run_dag(inp, stages, spec.global_)
+        except asyncio.CancelledError:
+            self._phase = Phase.CANCELLED
+            await self._notify(inp, "cancelled", spec.global_)
+            return {"phase": Phase.CANCELLED.value}
+        except Exception as exc:
+            self._phase = Phase.COMPENSATING
+            await self._run_compensation(inp, spec.pipeline.compensation)
+            self._phase = Phase.FAILED
+            await self._notify(inp, "failed", spec.global_, error=str(exc))
+            # 确保用 ApplicationError 终止，避免 Temporal 无限重试 workflow task
+            with workflow.unsafe.imports_passed_through():
+                from temporalio.exceptions import ApplicationError
+            if not isinstance(exc, ApplicationError):
+                raise ApplicationError(str(exc), non_retryable=True) from exc
+            raise
+
+        self._phase = Phase.SUCCEEDED
+        await self._notify(inp, "succeeded", spec.global_)
+        return {"phase": Phase.SUCCEEDED.value, "state": self._state}
+
+    # ---------- DAG 执行 ----------
+
+    async def _run_dag(
+        self,
+        inp: PipelineRunInput,
+        stages: list[Stage],
+        global_: GlobalSpec,
+    ) -> None:
+        """按 DAG 拓扑顺序执行所有 Stage。"""
+        topo = topological_order(stages)
+        stage_map = {s.name: s for s in stages}
+        failed_stages: list[str] = []
+
+        for stage_name in topo:
+            # 取消检查
+            if self._cancelled:
+                raise asyncio.CancelledError()
+
+            # 暂停等待
+            if self._paused:
+                self._phase = Phase.PAUSED
+                await workflow.wait_condition(lambda: not self._paused)
+                self._phase = Phase.RUNNING
+
+            stage = stage_map[stage_name]
+
+            # 跳过已完成（continue_as_new 恢复）
+            if self._stage_statuses.get(stage_name) in (StagePhase.SUCCEEDED, StagePhase.SKIPPED):
+                continue
+
+            # 前驱失败时跳过（onFailure=continue 的后继节点除外）
+            if any(dep in failed_stages for dep in stage.dependsOn):
+                if stage.onFailure == OnFailure.FAIL:
+                    self._stage_statuses[stage_name] = StagePhase.SKIPPED
+                    continue
+
+            # condition 检查
+            if stage.condition:
+                with workflow.unsafe.imports_passed_through():
+                    from ..schema.expr import evaluate as eval_expr
+                try:
+                    if not eval_expr(stage.condition, self._state):
+                        self._stage_statuses[stage_name] = StagePhase.SKIPPED
+                        continue
+                except Exception:
+                    self._stage_statuses[stage_name] = StagePhase.FAILED
+                    failed_stages.append(stage_name)
+                    continue
+
+            # 审批节点
+            if stage.approval:
+                await self._run_approval(stage, inp)
+                approval_status = self._approval_state.get(stage_name, {}).get("status")
+                if approval_status == "rejected":
+                    self._stage_statuses[stage_name] = StagePhase.FAILED
+                    failed_stages.append(stage_name)
+                    if stage.onFailure == OnFailure.FAIL:
+                        # 用 ApplicationError 正确终止 Workflow（不触发 Temporal 重试）
+                        with workflow.unsafe.imports_passed_through():
+                            from temporalio.exceptions import ApplicationError
+                        raise ApplicationError(
+                            f"stage '{stage_name}' 审批被拒绝",
+                            non_retryable=True,
+                        )
+                    continue
+                self._stage_statuses[stage_name] = StagePhase.SUCCEEDED
+                continue
+
+            # dynamic for_each
+            if stage.dynamic:
+                try:
+                    results = await self._execute_dynamic(stage, inp, global_)
+                    out_path = f"$.{stage_name}"
+                    if stage.dynamic.aggregateOutput:
+                        out_path = stage.dynamic.aggregateOutput
+                    self._set_state(out_path, results)
+                    self._stage_statuses[stage_name] = StagePhase.SUCCEEDED
+                    self._completed_count += 1
+                except Exception as exc:
+                    self._stage_statuses[stage_name] = StagePhase.FAILED
+                    failed_stages.append(stage_name)
+                    if stage.onFailure == OnFailure.FAIL:
+                        with workflow.unsafe.imports_passed_through():
+                            from temporalio.exceptions import ApplicationError
+                        raise ApplicationError(str(exc), non_retryable=False) from exc
+                continue
+
+            # 执行 Stage
+            self._current_stage = stage_name
+            self._stage_statuses[stage_name] = StagePhase.RUNNING
+
+            try:
+                output = await self._execute_stage(stage, inp, global_)
+                # 写入 State
+                out_path = stage_name if isinstance(stage.output, str) and stage.output else f"$.{stage_name}"
+                if isinstance(stage.output, str):
+                    out_path = stage.output
+                elif stage.output:
+                    out_path = stage.output.path
+                self._set_state(out_path, output.output_value)
+                self._stage_statuses[stage_name] = StagePhase.SUCCEEDED
+                self._completed_count += 1
+            except Exception as exc:
+                self._stage_statuses[stage_name] = StagePhase.FAILED
+                failed_stages.append(stage_name)
+                if stage.onFailure == OnFailure.FAIL:
+                    raise
+                if stage.onFailure == OnFailure.COMPENSATE:
+                    raise
+
+            # continue_as_new 检查（每 100 stage 截断一次）
+            if self._completed_count % 100 == 0 and self._completed_count > 0:
+                workflow.continue_as_new(PipelineRunInput(
+                    pipeline_dict=inp.pipeline_dict,
+                    run_id=inp.run_id,
+                    params=inp.params,
+                    actor=inp.actor,
+                    carry_state=self._state,
+                    completed_stages=list(self._stage_statuses.keys()),
+                    stage_statuses={k: v.value for k, v in self._stage_statuses.items()},
+                    completed_count=self._completed_count,
+                ))
+
+    # ---------- dynamic for_each ----------
+
+    async def _execute_dynamic(
+        self,
+        stage: Stage,
+        inp: PipelineRunInput,
+        global_: GlobalSpec,
+    ) -> list[Any]:
+        """展开 dynamic.for_each，并行执行每个 item，返回结果列表。"""
+        dynamic = stage.dynamic
+        assert dynamic is not None
+
+        # 从 State 获取 items 列表
+        items = self._get_state(dynamic.input)
+        if not isinstance(items, list):
+            items = [items] if items is not None else []
+
+        # 上限检查
+        max_items = dynamic.maxItems or 1000
+        items = items[:max_items]
+
+        pipeline_name = inp.pipeline_dict.get("metadata", {}).get("name", "unknown")
+        wf_id = workflow.info().workflow_id
+
+        with workflow.unsafe.imports_passed_through():
+            from ..observability.tracing import inject_context
+        carrier: dict[str, str] = {}
+        inject_context(carrier)
+
+        timeout = timedelta(minutes=10)
+        if dynamic.template and isinstance(dynamic.template, dict):
+            tmpl_timeouts = dynamic.template.get("timeouts", {})
+            if tmpl_timeouts.get("startToClose"):
+                timeout = _parse_duration(tmpl_timeouts["startToClose"])
+
+        retry_policy = RetryPolicy(
+            maximum_attempts=2,
+            initial_interval=timedelta(seconds=5),
+            maximum_interval=timedelta(minutes=2),
+            backoff_coefficient=2.0,
+        )
+
+        # 从 template 中取 agent_name
+        tmpl = dynamic.template if isinstance(dynamic.template, dict) else {}
+        agent_name = tmpl.get("agent", "grape")
+
+        # 信号量控制并行度
+        max_parallel = dynamic.maxParallel or 1
+        sem = asyncio.Semaphore(max_parallel)
+
+        async def _run_item(idx: int, item: Any) -> Any:
+            async with sem:
+                task = TaskInput(
+                    workflow_id=wf_id,
+                    stage_name=f"{stage.name}_{idx}",
+                    agent_name=agent_name,
+                    role="developer",
+                    tools=[],
+                    input=item,
+                    idempotency_key=f"{wf_id}/{stage.name}/{idx}",
+                    traceparent=carrier.get("traceparent"),
+                )
+                result: StageOutput = await workflow.execute_activity(
+                    execute_agent_task,
+                    AgentTaskInput(task=task, stage_name=f"{stage.name}_{idx}", pipeline_name=pipeline_name),
+                    start_to_close_timeout=timeout,
+                    retry_policy=retry_policy,
+                )
+                return result.output_value
+
+        fail_fast = (dynamic.onItemFailure or "fail_fast") == "fail_fast"
+        results = await asyncio.gather(
+            *[_run_item(i, item) for i, item in enumerate(items)],
+            return_exceptions=(not fail_fast),
+        )
+
+        if fail_fast:
+            return list(results)
+
+        # continue 模式：返回成功的，跳过异常
+        return [r for r in results if not isinstance(r, BaseException)]
+
+    async def _execute_stage(
+        self,
+        stage: Stage,
+        inp: PipelineRunInput,
+        global_: GlobalSpec,
+    ) -> StageOutput:
+        """执行单个 Stage（单 agent 或并行多 agent）。"""
+        # ── 构建通用参数 ──
+        with workflow.unsafe.imports_passed_through():
+            from ..observability.tracing import inject_context
+        carrier: dict[str, str] = {}
+        inject_context(carrier)
+
+        pipeline_name = inp.pipeline_dict.get("metadata", {}).get("name", "unknown")
+        wf_id = workflow.info().workflow_id
+        stage_input = self._get_state(str(stage.input) if stage.input else "")
+
+        retry_policy = RetryPolicy(
+            maximum_attempts=3,
+            initial_interval=timedelta(seconds=10),
+            maximum_interval=timedelta(minutes=5),
+            backoff_coefficient=2.0,
+        )
+        timeout = timedelta(minutes=30)
+        if stage.timeouts and stage.timeouts.startToClose:
+            timeout = _parse_duration(stage.timeouts.startToClose)
+
+        def _make_task(agent_name: str, suffix: str = "") -> AgentTaskInput:
+            task = TaskInput(
+                workflow_id=wf_id,
+                stage_name=stage.name,
+                agent_name=agent_name,
+                role="developer",
+                tools=[],
+                input=stage_input,
+                idempotency_key=f"{wf_id}/{stage.name}{suffix}",
+                traceparent=carrier.get("traceparent"),
+            )
+            return AgentTaskInput(task=task, stage_name=stage.name, pipeline_name=pipeline_name)
+
+        async def _run_one(agent_name: str, suffix: str = "") -> StageOutput:
+            return await workflow.execute_activity(
+                execute_agent_task,
+                _make_task(agent_name, suffix),
+                start_to_close_timeout=timeout,
+                retry_policy=retry_policy,
+            )
+
+        # ── 单 Agent ──
+        if stage.agent or not stage.agents:
+            agent_name = stage.agent or "grape"
+            return await _run_one(agent_name)
+
+        # ── 并行 Agents（aggregateStrategy）──
+        agents = stage.agents
+        strategy = stage.aggregateStrategy
+
+        results: list[StageOutput | BaseException] = list(
+            await asyncio.gather(
+                *[_run_one(a, f"/{i}") for i, a in enumerate(agents)],
+                return_exceptions=True,
+            )
+        )
+
+        successes = [r for r in results if isinstance(r, StageOutput)]
+        errors = [r for r in results if isinstance(r, BaseException)]
+
+        from ..domain.enums import AggregateStrategy
+
+        if strategy == AggregateStrategy.ANY:
+            if successes:
+                return successes[0]
+            raise errors[0]
+
+        if strategy == AggregateStrategy.FIRST:
+            if successes:
+                return successes[0]
+            raise errors[0]
+
+        if strategy == AggregateStrategy.ALL:
+            if errors:
+                raise errors[0]
+            # 合并所有成功输出为 list
+            return StageOutput(
+                stage_name=stage.name,
+                success=True,
+                output_path=f"$.{stage.name}",
+                output_value=[r.output_value for r in successes],
+                started_at_iso=successes[0].started_at_iso if successes else "",
+                completed_at_iso=successes[-1].completed_at_iso if successes else "",
+                tokens_consumed=sum(r.tokens_consumed for r in successes),
+                cost_usd=sum(r.cost_usd for r in successes),
+            )
+
+        if strategy == AggregateStrategy.MERGE:
+            # 将各输出合并为 dict
+            merged: dict = {}
+            for r in successes:
+                if isinstance(r.output_value, dict):
+                    merged.update(r.output_value)
+            return StageOutput(
+                stage_name=stage.name,
+                success=True,
+                output_path=f"$.{stage.name}",
+                output_value=merged,
+                started_at_iso=successes[0].started_at_iso if successes else "",
+                completed_at_iso=successes[-1].completed_at_iso if successes else "",
+                tokens_consumed=sum(r.tokens_consumed for r in successes),
+                cost_usd=sum(r.cost_usd for r in successes),
+            )
+
+        if strategy in (AggregateStrategy.VOTE, AggregateStrategy.QUORUM):
+            threshold = stage.quorumThreshold or 0.5
+            needed = int(len(agents) * threshold) + 1
+            if len(successes) >= needed:
+                return successes[0]
+            raise errors[0] if errors else RuntimeError(f"达不到 quorum 阈值 {threshold}")
+
+        # 默认 all
+        if errors:
+            raise errors[0]
+        return successes[0]
+
+    # ---------- 审批 ----------
+
+    async def _run_approval(self, stage: Stage, inp: PipelineRunInput) -> None:
+        """等待审批 Update 信号。"""
+        stage_name = stage.name
+        self._approval_state[stage_name] = {
+            "status": "pending",
+            "approvals": [],
+            "started_at": str(workflow.now()),
+        }
+        self._phase = Phase.PENDING_APPROVAL
+
+        timeout = timedelta(hours=1)
+        if stage.approval and stage.approval.timeout:
+            timeout = _parse_duration(stage.approval.timeout)
+
+        try:
+            await workflow.wait_condition(
+                lambda: self._approval_state[stage_name]["status"] != "pending",
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            on_timeout = stage.approval.onTimeout.value if stage.approval else "reject"
+            self._approval_state[stage_name]["status"] = "rejected" if on_timeout in ("reject", "escalate") else "approved"
+
+        self._phase = Phase.RUNNING
+
+    def _get_stage_approval(self, stage_name: str) -> Any:
+        pipeline_stages = {}
+        return pipeline_stages.get(stage_name)
+
+    def _check_approval_policy(self, stage_name: str, approval: Any) -> bool:
+        approvals = self._approval_state.get(stage_name, {}).get("approvals", [])
+        return len(approvals) >= 1  # 简化：至少一个审批
+
+    # ---------- 补偿 ----------
+
+    async def _run_compensation(self, inp: PipelineRunInput, comp: Compensation | None) -> None:
+        if not comp:
+            return
+        for action in comp.actions:
+            try:
+                await workflow.execute_activity(
+                    run_compensation,
+                    CompensationInput(
+                        for_stage=action.forStage,
+                        agent_name=action.agent,
+                        action=action.action,
+                        input_data=self._state,
+                    ),
+                    start_to_close_timeout=timedelta(minutes=10),
+                    retry_policy=RetryPolicy(maximum_attempts=comp.maxCompensationAttempts),
+                )
+            except Exception:
+                if comp.onCompensationFailure == "abort":
+                    raise
+
+    # ---------- 通知 ----------
+
+    async def _notify(
+        self,
+        inp: PipelineRunInput,
+        event: str,
+        global_: GlobalSpec,
+        error: str | None = None,
+    ) -> None:
+        if not global_.notification or not global_.notification.onEvents:
+            return
+        with workflow.unsafe.imports_passed_through():
+            from ..domain.enums import NotificationEvent
+        valid_events = [e.value for e in global_.notification.onEvents]
+        if event not in valid_events:
+            return
+        _pipeline_name = inp.pipeline_dict.get("metadata", {}).get("name", "unknown")
+        msg = f"Pipeline {_pipeline_name} [{event}]"
+        if error:
+            msg += f": {error}"
+        for channel in global_.notification.channels:
+            try:
+                await workflow.execute_activity(
+                    send_notification,
+                    NotificationInput(
+                        channel=channel.value,
+                        target=global_.notification.target or "",
+                        message=msg,
+                        pipeline_id=_pipeline_name,
+                        event=event,
+                    ),
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=RetryPolicy(maximum_attempts=1),
+                )
+            except Exception:
+                pass  # 通知失败不阻塞流水线
+
+    # ---------- 工具 ----------
+
+    def _get_state(self, path: str) -> Any:
+        if not path or not path.startswith("$"):
+            return path
+        with workflow.unsafe.imports_passed_through():
+            from ..schema.jsonpath import get_value
+        return get_value(self._state, path)
+
+    def _set_state(self, path: str, value: Any) -> None:
+        if not path:
+            return
+        if not path.startswith("$"):
+            path = f"$.{path}"
+        with workflow.unsafe.imports_passed_through():
+            from ..schema.jsonpath import set_value
+        try:
+            set_value(self._state, path, value)
+        except Exception:
+            pass
+
+
+def _parse_duration(d: str) -> timedelta:
+    """将 Duration 字符串转为 timedelta。"""
+    import re
+    units = {"ns": 1e-9, "us": 1e-6, "ms": 1e-3, "s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+    m = re.fullmatch(r"(\d+)(ns|us|ms|s|m|h|d|w)", d)
+    if not m:
+        return timedelta(minutes=30)  # 默认
+    return timedelta(seconds=float(m.group(1)) * units[m.group(2)])

@@ -1,0 +1,395 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orchestra.io/schema/v1/pipeline.schema.json",
+  "title": "Pipeline",
+  "description": "Agent Orchestra 流水线定义。一个 Pipeline 描述一条 DAG，可被 PipelineRun 多次实例化。",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "unevaluatedProperties": false,
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "orchestra.io/v1"
+    },
+    "kind": {
+      "type": "string",
+      "const": "Pipeline"
+    },
+    "metadata": {
+      "$ref": "#/$defs/Metadata"
+    },
+    "spec": {
+      "$ref": "#/$defs/PipelineSpec"
+    }
+  },
+  "$defs": {
+    "Metadata": {
+      "type": "object",
+      "required": ["name", "namespace"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "name": {"$ref": "#/$defs/Dns1123Name"},
+        "namespace": {"$ref": "#/$defs/Dns1123Name", "description": "对应 Temporal Namespace"},
+        "version": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$"},
+        "labels": {"type": "object", "additionalProperties": {"type": "string"}},
+        "annotations": {"type": "object", "additionalProperties": {"type": "string"}}
+      }
+    },
+    "PipelineSpec": {
+      "type": "object",
+      "required": ["agents", "pipeline"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "description": {"type": "string"},
+        "agents": {
+          "type": "object",
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z][a-z0-9-]{0,62}$": {"$ref": "#/$defs/AgentSpec"}
+          },
+          "additionalProperties": false
+        },
+        "pipeline": {"$ref": "#/$defs/PipelineBody"},
+        "secrets": {"type": "array", "items": {"$ref": "#/$defs/SecretRef"}},
+        "global": {"$ref": "#/$defs/GlobalSpec"},
+        "parameters": {"type": "array", "items": {"$ref": "#/$defs/ParameterDef"}}
+      }
+    },
+    "AgentSpec": {
+      "type": "object",
+      "required": ["role"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "role": {"type": "string", "enum": ["developer", "tester", "designer", "ci_engineer", "chat", "standby"]},
+        "model": {"type": "string"},
+        "tools": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "labels": {"type": "object", "additionalProperties": {"type": "string"}},
+        "capabilities": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "taskQueue": {"type": "string"},
+        "mcpEndpoint": {"type": "string", "format": "uri"},
+        "maxConcurrency": {"type": "integer", "minimum": 1, "default": 1},
+        "resources": {"$ref": "#/$defs/Resources"},
+        "startupProbe": {"$ref": "#/$defs/Probe"},
+        "readinessProbe": {"$ref": "#/$defs/Probe"},
+        "livenessProbe": {"$ref": "#/$defs/LivenessProbe"},
+        "retry": {"$ref": "#/$defs/RetryPolicy"}
+      }
+    },
+    "Resources": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "requests": {"$ref": "#/$defs/ResourceQuantities"},
+        "limits": {"$ref": "#/$defs/ResourceQuantities"}
+      }
+    },
+    "ResourceQuantities": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "memory": {"type": "string", "pattern": "^\\d+(Mi|Gi|Ti)?$"},
+        "cpu": {"type": "string"},
+        "tokensPerMinute": {"type": "integer", "minimum": 0}
+      }
+    },
+    "Probe": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "endpoint": {"type": "string"},
+        "initialDelay": {"$ref": "#/$defs/Duration"},
+        "periodSeconds": {"$ref": "#/$defs/Duration"},
+        "timeout": {"$ref": "#/$defs/Duration"},
+        "failureThreshold": {"type": "integer", "minimum": 1}
+      }
+    },
+    "LivenessProbe": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "heartbeatInterval": {"$ref": "#/$defs/Duration"},
+        "gracePeriod": {"$ref": "#/$defs/Duration"}
+      }
+    },
+    "RetryPolicy": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "maxAttempts": {"type": "integer", "minimum": 1, "default": 3},
+        "backoff": {"type": "string", "enum": ["fixed", "linear", "exponential"], "default": "exponential"},
+        "initialInterval": {"$ref": "#/$defs/Duration"},
+        "maxInterval": {"$ref": "#/$defs/Duration"},
+        "coefficient": {"type": "number", "minimum": 1.0, "default": 2.0},
+        "nonRetryableErrors": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "PipelineBody": {
+      "type": "object",
+      "required": ["stages"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "stages": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/Stage"}},
+        "compensation": {"$ref": "#/$defs/Compensation"},
+        "schedule": {"type": "string", "description": "Cron 表达式（5 字段，本地时区）"}
+      }
+    },
+    "Stage": {
+      "type": "object",
+      "required": ["name"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "name": {"$ref": "#/$defs/Dns1123Name"},
+        "agent": {"type": "string"},
+        "agents": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "agentSelector": {"$ref": "#/$defs/AgentSelector"},
+        "childWorkflow": {"$ref": "#/$defs/ChildWorkflowRef"},
+        "approval": {"$ref": "#/$defs/Approval"},
+        "dynamic": {"$ref": "#/$defs/DynamicStage"},
+        "loop": {"$ref": "#/$defs/LoopStage"},
+        "dependsOn": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "condition": {"type": "string"},
+        "priority": {"type": "integer", "minimum": 0, "maximum": 100, "default": 50},
+        "input": {"type": ["string", "object", "array"]},
+        "output": {
+          "oneOf": [
+            {"type": "string"},
+            {
+              "type": "object",
+              "required": ["path"],
+              "unevaluatedProperties": false,
+              "properties": {
+                "path": {"type": "string"},
+                "storage": {"type": "string", "enum": ["inline", "reference", "oss"], "default": "inline"},
+                "bucket": {"type": "string"},
+                "ttl": {"$ref": "#/$defs/Duration"}
+              }
+            }
+          ]
+        },
+        "inputSchema": {"type": "object"},
+        "outputSchema": {"type": "object"},
+        "schemaViolationPolicy": {"type": "string", "enum": ["fail", "warn"], "default": "fail"},
+        "requireUpstream": {"type": "boolean", "default": false},
+        "timeouts": {"$ref": "#/$defs/StageTimeouts"},
+        "retry": {"$ref": "#/$defs/RetryPolicy"},
+        "aggregateStrategy": {"type": "string", "enum": ["all", "any", "first", "merge", "vote", "quorum"], "default": "all"},
+        "quorumThreshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "onFailure": {"type": "string", "enum": ["continue", "fail", "compensate"], "default": "fail"},
+        "artifacts": {"type": "array", "items": {"$ref": "#/$defs/ArtifactSpec"}},
+        "inputArtifacts": {"type": "array", "items": {"$ref": "#/$defs/ArtifactRef"}},
+        "cache": {"$ref": "#/$defs/CacheSpec"},
+        "idempotencyKey": {"type": "string"},
+        "sideEffects": {"type": "array", "items": {"type": "string", "enum": ["git", "fs", "deploy", "network", "db"]}}
+      }
+    },
+    "AgentSelector": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "role": {"type": "string"},
+        "capabilities": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    },
+    "ChildWorkflowRef": {
+      "type": "object",
+      "required": ["name"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "name": {"type": "string"},
+        "version": {"type": "string"},
+        "parentClosePolicy": {"type": "string", "enum": ["TERMINATE", "ABANDON", "REQUEST_CANCEL"], "default": "TERMINATE"}
+      }
+    },
+    "Approval": {
+      "type": "object",
+      "required": ["approvers"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "approvers": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "policy": {"type": "string", "enum": ["any", "all", "quorum"], "default": "any"},
+        "quorumCount": {"type": "integer", "minimum": 1},
+        "message": {"type": "string"},
+        "timeout": {"$ref": "#/$defs/Duration"},
+        "onTimeout": {"type": "string", "enum": ["reject", "approve", "escalate"], "default": "reject"},
+        "escalateTo": {"type": "string"},
+        "reminderInterval": {"$ref": "#/$defs/Duration"},
+        "contextFields": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "DynamicStage": {
+      "type": "object",
+      "required": ["generator", "input", "template"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "generator": {"type": "string", "enum": ["for_each", "fan_out"]},
+        "input": {"type": "string"},
+        "template": {"type": "object", "description": "Stage 模板（name 字段可含 {{ }} 占位符，不做 DNS-1123 校验）"},
+        "maxParallel": {"type": "integer", "minimum": 1, "default": 1},
+        "maxItems": {"type": "integer", "minimum": 1, "default": 1000},
+        "onItemFailure": {"type": "string", "enum": ["continue", "fail_fast"], "default": "fail_fast"},
+        "aggregateOutput": {"type": "string"}
+      }
+    },
+    "LoopStage": {
+      "type": "object",
+      "required": ["body", "condition", "maxIterations"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "body": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "condition": {"type": "string"},
+        "maxIterations": {"type": "integer", "minimum": 1, "maximum": 100},
+        "onMaxReached": {"type": "string", "enum": ["fail", "continue"], "default": "fail"}
+      }
+    },
+    "StageTimeouts": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "scheduleToStart": {"$ref": "#/$defs/Duration"},
+        "startToClose": {"$ref": "#/$defs/Duration"},
+        "scheduleToClose": {"$ref": "#/$defs/Duration"},
+        "heartbeat": {"$ref": "#/$defs/Duration"}
+      }
+    },
+    "ArtifactSpec": {
+      "type": "object",
+      "required": ["name", "path"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "name": {"type": "string"},
+        "path": {"type": "string"},
+        "type": {"type": "string", "enum": ["file", "directory"], "default": "file"},
+        "retention": {"$ref": "#/$defs/Duration"},
+        "compress": {"type": "boolean", "default": false},
+        "storageClass": {"type": "string", "enum": ["local", "s3", "oss"], "default": "local"},
+        "hash": {"type": "string", "enum": ["sha256", "md5"], "default": "sha256"}
+      }
+    },
+    "ArtifactRef": {
+      "type": "object",
+      "required": ["from"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "from": {"type": "string", "description": "<stage>/<artifact-name>"},
+        "as": {"type": "string"}
+      }
+    },
+    "CacheSpec": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "key": {"type": "string"},
+        "ttl": {"$ref": "#/$defs/Duration"},
+        "enabled": {"type": "boolean", "default": false}
+      }
+    },
+    "Compensation": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "strategy": {"type": "string", "enum": ["reverse", "parallel", "custom"], "default": "reverse"},
+        "maxCompensationAttempts": {"type": "integer", "minimum": 1, "default": 1},
+        "onCompensationFailure": {"type": "string", "enum": ["alert", "abort"], "default": "alert"},
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["forStage", "agent", "action"],
+            "unevaluatedProperties": false,
+            "properties": {
+              "forStage": {"type": "string"},
+              "agent": {"type": "string"},
+              "action": {"type": "string"},
+              "runOn": {"type": "string", "enum": ["any_failure", "specific_stage"], "default": "any_failure"}
+            }
+          }
+        }
+      }
+    },
+    "GlobalSpec": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "heartbeatInterval": {"$ref": "#/$defs/Duration", "default": "15s"},
+        "maxConcurrency": {"type": "integer", "minimum": 1, "default": 3},
+        "timeouts": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "properties": {
+            "workflowExecution": {"$ref": "#/$defs/Duration", "default": "24h"},
+            "activityDefault": {"$ref": "#/$defs/Duration", "default": "30m"}
+          }
+        },
+        "notification": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "properties": {
+            "channels": {"type": "array", "items": {"type": "string", "enum": ["feishu", "email", "slack", "dingtalk"]}},
+            "target": {"type": "string"},
+            "onEvents": {"type": "array", "items": {"type": "string", "enum": ["failed", "approval_pending", "succeeded", "started"]}}
+          }
+        },
+        "dryRun": {"type": "boolean", "default": false},
+        "artifactsBasePath": {"type": "string", "default": "/opt/agent-orchestra/artifacts"},
+        "priority": {"type": "string", "enum": ["low", "normal", "high", "critical"], "default": "normal"},
+        "retention": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "properties": {
+            "historyDays": {"type": "integer", "minimum": 1, "default": 30},
+            "artifactsDays": {"type": "integer", "minimum": 1, "default": 7},
+            "successfulRunsKeep": {"type": "integer", "minimum": 0, "default": 100},
+            "failedRunsKeep": {"type": "integer", "minimum": 0, "default": 50}
+          }
+        }
+      }
+    },
+    "SecretRef": {
+      "type": "object",
+      "required": ["name"],
+      "unevaluatedProperties": false,
+      "oneOf": [
+        {"required": ["fromEnv"]},
+        {"required": ["fromFile"]},
+        {"required": ["fromVault"]}
+      ],
+      "properties": {
+        "name": {"type": "string"},
+        "fromEnv": {"type": "string"},
+        "fromFile": {"type": "string"},
+        "fromVault": {
+          "type": "object",
+          "required": ["path", "key"],
+          "unevaluatedProperties": false,
+          "properties": {
+            "path": {"type": "string"},
+            "key": {"type": "string"}
+          }
+        }
+      }
+    },
+    "ParameterDef": {
+      "type": "object",
+      "required": ["name", "type"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "name": {"type": "string"},
+        "type": {"type": "string", "enum": ["string", "integer", "number", "boolean"]},
+        "default": {},
+        "enum": {"type": "array"},
+        "description": {"type": "string"},
+        "required": {"type": "boolean", "default": false}
+      }
+    },
+    "Duration": {
+      "type": "string",
+      "pattern": "^\\d+(ns|us|ms|s|m|h|d|w)$",
+      "description": "扩展 Go duration 格式：ns/us/ms/s/m/h（Temporal SDK 兼容）+ d/w（仅用于 retention/TTL 等非 Temporal 字段）。引擎对传给 Temporal 的字段会拒绝 d/w。"
+    },
+    "Dns1123Name": {
+      "type": "string",
+      "pattern": "^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$",
+      "description": "DNS-1123 命名：小写字母开头，仅含小写字母/数字/连字符，长度 ≤63"
+    }
+  }
+}

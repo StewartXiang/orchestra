@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: uv sync --all-extras
+      - name: Ruff check
+        run: uv run ruff check src tests
+      - name: Ruff format check
+        run: uv run ruff format --check src tests
+      - name: Mypy strict
+        run: uv run mypy --strict src
+
+  schema:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: uv sync --all-extras
+      - name: Validate JSON schemas parse
+        run: |
+          for f in schema/*.json; do
+            uv run python -c "import json; json.load(open('$f'))" && echo "✓ $f"
+          done
+      - name: Validate examples against schema
+        run: |
+          for f in examples/*.pipeline.yaml; do
+            uv run python -c "
+          import yaml, json, jsonschema
+          spec = yaml.safe_load(open('$f'))
+          schema = json.load(open('schema/pipeline.schema.json'))
+          jsonschema.validate(spec, schema)
+          print('✓ $f')
+          "
+          done
+      - name: Validate config files
+        run: |
+          uv run python -c "
+          import yaml, json, jsonschema
+          ps = yaml.safe_load(open('config/profiles.yaml'))
+          schema = json.load(open('schema/agent-profile.schema.json'))
+          jsonschema.validate(ps, schema)
+          print('✓ config/profiles.yaml')
+          "
+
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: uv sync --all-extras
+      - name: Pytest unit
+        run: uv run pytest tests/unit -v --cov=src/orchestra --cov-report=xml --cov-fail-under=80
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+
+  replay:
+    runs-on: ubuntu-latest
+    needs: [unit]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true  # replay fixtures 可能存在 git LFS
+      - uses: astral-sh/setup-uv@v3
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: uv sync --all-extras
+      - name: Pytest replay (Workflow 兼容性回归)
+        run: uv run pytest tests/replay -v
+        # Replay 失败必须修；如果是有意的不兼容变更，加 workflow.get_version() 兼容补丁
+
+  integration:
+    runs-on: ubuntu-latest
+    needs: [unit]
+    services:
+      temporal:
+        image: temporalio/auto-setup:1.24
+        ports: ["7233:7233"]
+        env:
+          DB: sqlite
+        options: >-
+          --health-cmd "tctl --address localhost:7233 cluster health || exit 1"
+          --health-interval 10s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: uv sync --all-extras
+      - name: Pytest integration (mock Adapter)
+        env:
+          TEMPORAL_HOST: localhost:7233
+        run: uv run pytest tests/integration -v -m integration
+
+  deploy-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker compose config
+        run: docker compose -f deploy/docker-compose.yml config > /dev/null
+      - name: Validate Prometheus rules
+        uses: docker://prom/prometheus:v2.51.0
+        with:
+          args: promtool check rules /github/workspace/deploy/prometheus/alerts.yaml

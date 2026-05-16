@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Read(//opt/orchestra/**)",
+      "Write(//opt/orchestra/**)",
+      "Edit(//opt/orchestra/**)",
+      "Bash(uv:*)",
+      "Bash(uv run:*)",
+      "Bash(uv tool:*)",
+      "Bash(pytest:*)",
+      "Bash(ruff:*)",
+      "Bash(mypy:*)",
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "Bash(docker compose ps:*)",
+      "Bash(docker compose logs:*)",
+      "Bash(docker compose config:*)",
+      "Bash(docker compose up -d:*)",
+      "Bash(docker compose stop:*)",
+      "Bash(docker compose restart:*)",
+      "Bash(temporal:*)",
+      "Bash(orchestra:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(tree:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git branch:*)",
+      "Bash(git checkout:*)",
+      "Bash(jq:*)",
+      "Bash(yq:*)"
+    ],
+    "deny": [
+      "Bash(docker compose down -v:*)",
+      "Bash(rm -rf:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git reset --hard:*)",
+      "Write(//root/.aws/**)",
+      "Write(//root/.ssh/**)",
+      "Write(//etc/**)",
+      "Bash(curl * | sh:*)",
+      "Bash(wget * | sh:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'jq -r \"select(.tool_input.file_path // \\\"\\\" | test(\\\"src/orchestra/workflows/\\\"))| .tool_input.content\" | grep -E \"^import (time|random|requests|aiohttp|httpx)|^from (time|random|requests|aiohttp|httpx)|datetime\\\\.now\\\\(|time\\\\.sleep\\\\(\" >&2 && { echo \"❌ Workflow 文件禁用 time/random/requests/aiohttp/httpx 等非确定性 import；用 workflow.now / workflow.sleep / workflow.random，或包成 Activity。详见 CLAUDE.md §3。\" >&2; exit 2; } || exit 0'"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'jq -r \"select(.tool_input.file_path // \\\"\\\" | test(\\\"src/orchestra/workflows/\\\"))| .tool_input.new_string\" | grep -E \"^import (time|random|requests|aiohttp|httpx)|^from (time|random|requests|aiohttp|httpx)|datetime\\\\.now\\\\(|time\\\\.sleep\\\\(\" >&2 && { echo \"❌ Workflow 文件禁用 time/random/requests/aiohttp/httpx 等非确定性 import。详见 CLAUDE.md §3。\" >&2; exit 2; } || exit 0'"
+          }
+        ]
+      }
+    ]
+  },
+  "env": {
+    "PYTHONPATH": "src",
+    "ORCHESTRA_NAMESPACE": "default"
+  }
+}

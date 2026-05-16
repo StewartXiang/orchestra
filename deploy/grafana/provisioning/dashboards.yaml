@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: orchestra
+    type: file
+    folder: Agent Orchestra
+    options:
+      path: /var/lib/grafana/dashboards
