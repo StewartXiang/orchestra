@@ -11,6 +11,7 @@
 | [05](05-state-too-large.md) | State 超过 2MB 限制 | `EventHistoryNearLimit` / `StateOversize` | P1 |
 | [06](06-llm-quota-exhausted.md) | LLM 配额耗尽 / 429 | `LLMCostBudgetExceeded` | P2 |
 | [07](07-misfired-pipeline.md) | 误提交错误流水线 | 人工触发 | P1 |
+| [08](08-bootstrap-infrastructure.md) | 基础设施启动与验证 | 全新部署 / 服务器重启 | P2 |
 
 ## 通用应急
 - 取消有副作用的流水线：`orchestra cancel <id>` → 看 `sideEffects` 字段评估

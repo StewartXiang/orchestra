@@ -102,7 +102,37 @@ orchestra health
 
 ## 3. 部署与启动
 
-### 3.1 服务组成
+> **实操指南：** 完整的分步操作、验证步骤、故障排查见
+> [runbook/08-bootstrap-infrastructure.md](../runbook/08-bootstrap-infrastructure.md)
+
+### 3.1 一键启动（生产最小配置）
+
+```bash
+# 1. 基础设施（Temporal + PostgreSQL + Redis）
+docker compose -f deploy/docker-compose.yml up -d \
+  postgres temporal-server redis
+
+# 2. 等待 Temporal 就绪
+until docker ps --filter name=temporal-server | grep -q healthy; do sleep 2; done
+
+# 3. 构建并启动 Worker（Flappy Bird 流水线只需 7 个）
+docker compose -f deploy/docker-compose.yml build
+docker compose -f deploy/docker-compose.yml up -d \
+  worker-walnut worker-almond worker-coconut worker-cherry \
+  worker-strawberry worker-blueberry worker-grape
+
+# 4. 启动 MCP Agent 服务器
+bash /opt/orchestra-agents/start_all.sh
+
+# 5. 提交流水线
+cd /home/ccbot/orchestra
+PYTHONPATH=src python3.10 -m orchestra.cli.main \
+  --host localhost:7233 submit \
+  examples/flappybird.pipeline.yaml \
+  --params '{"gdd": "你的 GDD 文本"}'
+```
+
+### 3.2 服务组成
 
 `deploy/docker-compose.yml` 包含以下服务：
 
