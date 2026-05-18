@@ -90,6 +90,7 @@ class TaskInput(BaseModel):
     idempotency_key: str
     deadline_iso: str | None = None
     traceparent: str | None = None        # OTel 上下文传播
+    output_schema: dict | None = None     # 期望的输出 JSON Schema（传给 agent 约束格式）
 
 
 class TaskOutput(BaseModel):

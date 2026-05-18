@@ -214,6 +214,7 @@ class PipelineWorkflow:
         topo = topological_order(stages)
         stage_map = {s.name: s for s in stages}
         failed_stages: list[str] = []
+        skipped_stages: list[str] = []  # 用于 requireUpstream 级联跳过
 
         # 收集 loop 控制的 body stages（在循环内执行，不在主拓扑中执行）
         loop_body_stages: set[str] = set()
@@ -247,7 +248,14 @@ class PipelineWorkflow:
             if any(dep in failed_stages for dep in stage.dependsOn):
                 if stage.onFailure == OnFailure.FAIL:
                     self._stage_statuses[stage_name] = StagePhase.SKIPPED
+                    skipped_stages.append(stage_name)
                     continue
+
+            # 前驱 SKIPPED 且 requireUpstream=True 时级联跳过
+            if stage.requireUpstream and any(dep in skipped_stages for dep in stage.dependsOn):
+                self._stage_statuses[stage_name] = StagePhase.SKIPPED
+                skipped_stages.append(stage_name)
+                continue
 
             # condition 检查
             if stage.condition:
@@ -256,6 +264,7 @@ class PipelineWorkflow:
                 try:
                     if not eval_expr(stage.condition, self._state):
                         self._stage_statuses[stage_name] = StagePhase.SKIPPED
+                        skipped_stages.append(stage_name)
                         continue
                 except Exception:
                     self._stage_statuses[stage_name] = StagePhase.FAILED
@@ -662,12 +671,18 @@ class PipelineWorkflow:
         wf_id = workflow.info().workflow_id
         stage_input = self._get_state(str(stage.input) if stage.input else "")
 
-        retry_policy = RetryPolicy(
+        retry_kwargs: dict = dict(
             maximum_attempts=3,
             initial_interval=timedelta(seconds=10),
             maximum_interval=timedelta(minutes=5),
             backoff_coefficient=2.0,
         )
+        # 应用 Stage 级 RetryPolicy 覆盖 + nonRetryableErrors
+        if stage.retry:
+            retry_kwargs["maximum_attempts"] = stage.retry.maxAttempts
+            if stage.retry.nonRetryableErrors:
+                retry_kwargs["non_retryable_error_types"] = stage.retry.nonRetryableErrors
+        retry_policy = RetryPolicy(**retry_kwargs)
         timeout = timedelta(minutes=30)
         if stage.timeouts and stage.timeouts.startToClose:
             timeout = _parse_duration(stage.timeouts.startToClose)
@@ -682,6 +697,7 @@ class PipelineWorkflow:
                 input=stage_input,
                 idempotency_key=f"{wf_id}/{stage.name}{suffix}",
                 traceparent=carrier.get("traceparent"),
+                output_schema=stage.outputSchema,
             )
             cache_enabled = bool(stage.cache and stage.cache.enabled)
             cache_ttl = 86400
@@ -724,16 +740,19 @@ class PipelineWorkflow:
             agent_name = stage.agent or "grape"
             return await _run_one(agent_name)
 
-        # ── 并行 Agents（aggregateStrategy）──
+        # ── 并行 Agents（aggregateStrategy + maxConcurrency 限流）──
         agents = stage.agents
         strategy = stage.aggregateStrategy
+        max_parallel = global_.maxConcurrency
 
-        results: list[StageOutput | BaseException] = list(
-            await asyncio.gather(
-                *[_run_one(a, f"/{i}") for i, a in enumerate(agents)],
+        results: list[StageOutput | BaseException] = []
+        for chunk_start in range(0, len(agents), max_parallel):
+            chunk = agents[chunk_start : chunk_start + max_parallel]
+            chunk_results = list(await asyncio.gather(
+                *[_run_one(a, f"/{chunk_start + i}") for i, a in enumerate(chunk)],
                 return_exceptions=True,
-            )
-        )
+            ))
+            results.extend(chunk_results)
 
         successes = [r for r in results if isinstance(r, StageOutput)]
         errors = [r for r in results if isinstance(r, BaseException)]

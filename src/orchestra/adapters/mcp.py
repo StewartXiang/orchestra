@@ -69,6 +69,8 @@ class MCPAdapter:
             "tools": task.tools,
             "input": task.input,
         }
+        if task.output_schema:
+            payload["output_schema"] = task.output_schema
         if resume_from:
             payload["resume_from"] = {
                 "step": resume_from.step,
