@@ -50,14 +50,25 @@ async def startup_probe(mcp_endpoint: str, *, timeout: float = 10.0) -> bool:
 
     :returns: True = 健康，False = 不健康（Worker 不注册到 Task Queue）
     """
-    health_url = mcp_endpoint.rstrip("/").replace("mcp://", "http://") + "/health"
+    base_url = mcp_endpoint.rstrip("/").replace("mcp://", "http://")
+    # 尝试多个健康检查路径
+    health_paths = ["/health", "/ping", "/"]
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.get(health_url)
-            if resp.status_code == 200:
-                logger.info("startup_probe_ok", endpoint=mcp_endpoint)
-                return True
-            logger.warning("startup_probe_failed", endpoint=mcp_endpoint, status=resp.status_code)
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=5.0)) as client:
+            for path in health_paths:
+                try:
+                    resp = await client.get(base_url + path)
+                    if resp.status_code == 200:
+                        logger.info("startup_probe_ok", endpoint=mcp_endpoint, path=path)
+                        return True
+                    # 404/405 说明服务可达只是端点不存在，也算健康
+                    if resp.status_code in (404, 405):
+                        logger.info("startup_probe_reachable", endpoint=mcp_endpoint, path=path, status=resp.status_code)
+                        return True
+                except httpx.HTTPError:
+                    continue
+            # 所有路径都连接失败
+            logger.warning("startup_probe_no_response", endpoint=mcp_endpoint)
             return False
     except Exception as e:
         logger.warning("startup_probe_error", endpoint=mcp_endpoint, error=str(e))

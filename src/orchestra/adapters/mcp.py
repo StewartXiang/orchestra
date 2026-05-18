@@ -37,7 +37,7 @@ class MCPAdapter:
         timeout_seconds: float = 300.0,
     ) -> None:
         self._name = profile_name
-        self._endpoint = mcp_endpoint.rstrip("/")
+        self._endpoint = mcp_endpoint.rstrip("/").replace("mcp://", "http://")
         self._role = role
         self._sandbox = Sandbox(allowed_tools=allowed_tools, profile_name=profile_name)
         self._timeout = httpx.Timeout(timeout_seconds, connect=10.0)

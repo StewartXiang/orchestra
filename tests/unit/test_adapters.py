@@ -111,3 +111,35 @@ async def test_mock_cancel():
     adapter = MockAgentAdapter("walnut")
     # cancel 不抛出异常，直接完成
     await adapter.cancel_task("task-1", timedelta(seconds=5))
+
+
+# ── Registry 辅助函数 ──
+
+def test_list_adapter_names():
+    """list_adapter_names 返回已注册的所有 adapter。"""
+    from orchestra.adapters.registry import build_registry, list_adapter_names
+    from orchestra.domain.agent import Profile, Role
+    from orchestra.domain.enums import HealthStatus
+
+    profiles = {
+        "walnut": Profile(
+            name="walnut", role=Role.DEVELOPER,
+            capabilities=["python", "godot"],
+            mcpEndpoint="mcp://localhost:18761",
+        ),
+        "almond": Profile(
+            name="almond", role=Role.TESTER,
+            capabilities=["pytest"],
+            mcpEndpoint="mcp://localhost:18762",
+        ),
+    }
+    build_registry(profiles, use_mock=True)
+    names = list_adapter_names()
+    assert set(names) == {"walnut", "almond"}
+
+
+def test_get_profile_task_queue():
+    """get_profile_task_queue 返回 'agent-{name}' 格式。"""
+    from orchestra.adapters.registry import get_profile_task_queue
+    assert get_profile_task_queue("walnut") == "agent-walnut"
+    assert get_profile_task_queue("grape") == "agent-grape"

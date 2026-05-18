@@ -81,6 +81,16 @@ def load_profiles_from_yaml(path: str | Path) -> dict[str, Profile]:
     return profiles
 
 
+def list_adapter_names() -> list[str]:
+    """返回当前注册表中所有 adapter 名称。"""
+    return list(_REGISTRY.keys())
+
+
+def get_profile_task_queue(profile_name: str) -> str:
+    """获取 Agent 的 task_queue（若 profile 未指定则推导）。"""
+    return f"agent-{profile_name}"
+
+
 def find_adapter_by_selector(
     role: str | None = None,
     capabilities: list[str] | None = None,

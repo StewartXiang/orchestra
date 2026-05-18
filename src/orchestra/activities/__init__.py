@@ -1,5 +1,12 @@
 """activities 模块公开 Activity 列表（Worker 注册用）。"""
 
+from .agent_resolver import (
+    AgentResolveAllOutput,
+    AgentResolveInput,
+    ResolvedAgent,
+    resolve_agent_by_selector,
+    resolve_all_matching_agents,
+)
 from .agent_task import AgentTaskInput, execute_agent_task
 from .artifact import ArtifactPutInput, put_artifact
 from .audit import AuditInput, write_audit_log
@@ -12,6 +19,8 @@ ALL_ACTIVITIES = [
     write_audit_log,
     run_compensation,
     send_notification,
+    resolve_agent_by_selector,
+    resolve_all_matching_agents,
 ]
 
 __all__ = [
@@ -25,5 +34,10 @@ __all__ = [
     "CompensationInput",
     "send_notification",
     "NotificationInput",
+    "resolve_agent_by_selector",
+    "resolve_all_matching_agents",
+    "AgentResolveInput",
+    "AgentResolveAllOutput",
+    "ResolvedAgent",
     "ALL_ACTIVITIES",
 ]

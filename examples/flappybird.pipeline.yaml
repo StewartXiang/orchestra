@@ -1,0 +1,225 @@
+apiVersion: orchestra.io/v1
+kind: Pipeline
+metadata:
+  name: flappybird-dev
+  namespace: flappybird
+  version: 1.0.0
+  labels:
+    project: flappybird
+    env: dev
+  annotations:
+    owner: "dev@example.com"
+    docs: "https://wiki/pipelines/flappybird"
+
+spec:
+  description: |
+    Flappy Bird 复刻流水线：
+    设计评审 → 开发 + 美术 → 测试 → 动态修 bug → UI 验证 → 审批 → 部署
+
+  agents:
+    walnut:
+      role: developer
+      capabilities: [python, godot, gdscript, git]
+      mcpEndpoint: "mcp://localhost:18761"
+      tools: [godot_edit, file_read, file_write, git_commit, git_push, shell_run]
+      maxConcurrency: 2
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+      retry: {maxAttempts: 3, backoff: exponential, initialInterval: 10s, maxInterval: 5m}
+
+    almond:
+      role: tester
+      capabilities: [python, pytest]
+      mcpEndpoint: "mcp://localhost:18762"
+      tools: [pytest_run, file_read, shell_run]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    cherry:
+      role: designer
+      capabilities: [ui-design, asset-export, godot]
+      mcpEndpoint: "mcp://localhost:18765"
+      tools: [godot_edit, file_write, image_process]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    coconut:
+      role: ci_engineer
+      capabilities: [docker, deploy, git, ci]
+      mcpEndpoint: "mcp://localhost:18764"
+      tools: [docker_run, shell_run, deploy_action, file_read]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    strawberry:
+      role: tester
+      capabilities: [playwright, ui-test, screenshot]
+      mcpEndpoint: "mcp://localhost:18767"
+      tools: [playwright_run, screenshot_compare]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    grape:
+      role: standby
+      capabilities: [playwright, ui-test, generic]
+      mcpEndpoint: "mcp://localhost:18769"
+      tools: [playwright_run, screenshot_compare, file_read]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    blueberry:
+      role: chat
+      capabilities: [chat, summarize, analyze]
+      mcpEndpoint: "mcp://localhost:18768"
+      tools: [file_read, summarize]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+  pipeline:
+    stages:
+      # ── Stage 1: GDD 评审 ──
+      - name: design-review
+        agent: blueberry
+        input: "$.params.gdd"
+        output: "$.gdd"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [task, has_ui_change]
+          properties:
+            task: {type: string}
+            has_ui_change: {type: boolean}
+            ui_spec: {type: string}
+
+      # ── Stage 2a: 游戏逻辑开发 ──
+      - name: code
+        agent: walnut
+        dependsOn: [design-review]
+        input: "$.gdd.task"
+        output: "$.code.patch"
+        timeouts: {startToClose: 30m, heartbeat: 30s}
+        cache: {enabled: true, ttl: 24h}
+        sideEffects: [git, fs]
+        artifacts:
+          - {name: game_build, path: "/opt/godot/projects/FlappyBird/build/",
+             type: directory, retention: 7d, compress: true, hash: sha256}
+
+      # ── Stage 2b: 美术资产（条件执行：有 UI 变更才跑）──
+      - name: art
+        agent: cherry
+        dependsOn: [design-review]
+        condition: "gdd.has_ui_change"
+        input: "$.gdd.ui_spec"
+        output: "$.art.assets"
+        timeouts: {startToClose: 20m, heartbeat: 30s}
+        artifacts:
+          - {name: sprites, path: "/opt/godot/projects/FlappyBird/assets/sprites/",
+             type: directory, retention: 30d}
+          - {name: ui, path: "/opt/godot/projects/FlappyBird/assets/ui/",
+             type: directory, retention: 30d}
+
+      # ── Stage 3: 测试 ──
+      - name: test
+        agent: almond
+        dependsOn: [code, art]
+        input: "$.code.patch"
+        output: "$.test"
+        inputSchema: {type: object, required: [patch]}
+        outputSchema:
+          type: object
+          required: [result, coverage]
+          properties:
+            result: {type: string, enum: [pass, fail]}
+            coverage: {type: number}
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+
+      # ── Stage 4: 诊断（测试失败时触发）──
+      - name: diagnose
+        agent: blueberry
+        dependsOn: [test]
+        condition: 'test.result != "pass"'
+        input: "$.test"
+        output: "$.diagnosis"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          properties:
+            bugs:
+              type: array
+              items:
+                type: object
+                properties:
+                  id: {type: string}
+                  description: {type: string}
+                  file: {type: string}
+                  severity: {type: string}
+
+      # ── Stage 5: 并行修 bug ──
+      - name: fix-each
+        dependsOn: [diagnose]
+        condition: 'size(diagnosis.bugs) > 0'
+        dynamic:
+          generator: for_each
+          input: "$.diagnosis.bugs"
+          maxParallel: 3
+          maxItems: 50
+          onItemFailure: continue
+          aggregateOutput: "$.fixes"
+          template:
+            name: "fix-bug-{{ item.id }}"
+            agent: walnut
+            input: "$.item"
+            output: "$.fix"
+            timeouts: {startToClose: 10m, heartbeat: 30s}
+
+      # ── Stage 6: UI 双视角验证 ──
+      - name: ui-verify
+        agents: [strawberry, grape]
+        dependsOn: [test, fix-each]
+        input: "$.code.patch"
+        output: "$.ui.result"
+        aggregateStrategy: vote
+        timeouts: {startToClose: 20m, heartbeat: 30s}
+
+      # ── Stage 7: 部署审批 ──
+      - name: deploy-approval
+        dependsOn: [ui-verify]
+        approval:
+          approvers: ["ou_xxx"]
+          policy: any
+          message: "Flappy Bird 测试通过，是否部署？"
+          timeout: 1h
+          onTimeout: reject
+
+      # ── Stage 8: 部署 ──
+      - name: deploy
+        agent: coconut
+        dependsOn: [deploy-approval]
+        input: "$.code.patch"
+        output: "$.deploy"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+        sideEffects: [deploy, network]
+        onFailure: compensate
+
+    compensation:
+      strategy: reverse
+      maxCompensationAttempts: 2
+      onCompensationFailure: alert
+      actions:
+        - {forStage: deploy, agent: coconut, action: rollback, runOn: any_failure}
+
+  parameters:
+    - name: gdd
+      type: string
+      required: true
+      description: "Flappy Bird Game Design Document（需求描述）"
+
+  secrets:
+    - {name: llm-api-key, fromEnv: LLM_API_KEY}
+    - {name: deploy-token, fromFile: "/etc/orchestra/secrets/deploy-token"}
+
+  global:
+    heartbeatInterval: 15s
+    maxConcurrency: 4
+    timeouts:
+      workflowExecution: 2h
+    notification:
+      channels: [feishu]
+      target: "ou_xxx"
+      onEvents: [failed, approval_pending, succeeded]
+    artifactsBasePath: "/opt/agent-orchestra/artifacts"
+    priority: normal
+    retention: {historyDays: 30, artifactsDays: 7}

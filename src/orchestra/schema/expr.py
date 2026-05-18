@@ -120,6 +120,39 @@ def _py_to_cel(value: Any, ct: Any) -> Any:
 
 # ---------- Fallback 后端（simpleeval 白名单）----------
 
+
+class _DotDict:
+    """将嵌套 dict 转为支持属性访问的对象。
+
+    condition 表达式如 ``test.result == "pass"`` 需要将
+    State 中的 ``{"test": {"result": "pass"}}`` 转为可用
+    ``test.result`` 语法访问的对象。
+    """
+
+    def __init__(self, data: dict[str, Any]) -> None:
+        for k, v in data.items():
+            if isinstance(v, dict):
+                object.__setattr__(self, k, _DotDict(v))
+            elif isinstance(v, list):
+                object.__setattr__(self, k, [_DotDict(i) if isinstance(i, dict) else i for i in v])
+            else:
+                object.__setattr__(self, k, v)
+
+    def __repr__(self) -> str:
+        items = {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
+        return f"_DotDict({items})"
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, _DotDict):
+            return self.__dict__ == other.__dict__
+        return NotImplemented
+
+
+def _state_to_dotdict(state: dict[str, Any]) -> _DotDict:
+    """将顶层 dict 转为 _DotDict，递归处理嵌套。"""
+    return _DotDict(state)
+
+
 _ALLOWED_NAMES = {"True", "False", "None", "true", "false", "null", "size", "matches"}
 
 
@@ -133,13 +166,16 @@ def _eval_with_fallback(expression: str, state: dict[str, Any]) -> bool:
     def safe_size(x: Any) -> int:
         if isinstance(x, (str, list, dict)):
             return len(x)
+        if isinstance(x, _DotDict):
+            return len(x.__dict__)
         raise InvalidInput(f"size() 不支持类型 {type(x).__name__}")
 
     def safe_matches(text: str, pattern: str) -> bool:
         return bool(re.search(pattern, text))
 
+    dot_state = _state_to_dotdict(state)
     evaluator = EvalWithCompoundTypes(
-        names={**state, "true": True, "false": False, "null": None},
+        names={k: v for k, v in dot_state.__dict__.items()},
         functions={"size": safe_size, "matches": safe_matches},
     )
     try:
@@ -153,9 +189,10 @@ def _eval_pure_python(expression: str, state: dict[str, Any]) -> bool:
     """纯 Python 求值（最后回退，仅支持最基本语法）。"""
     # 将常见 CEL 写法转为 Python
     py_expr = expression.replace("&&", " and ").replace("||", " or ").replace("!", " not ")
-    # 构建受限命名空间
+    # 构建受限命名空间（dict 转 dot-accessible）
+    dot_state = _state_to_dotdict(state)
     namespace: dict[str, Any] = {
-        **state,
+        **dot_state.__dict__,
         "true": True,
         "false": False,
         "null": None,

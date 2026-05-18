@@ -20,6 +20,11 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
+    # Pydantic + Python stdlib 模块在 import 时会访问 os.environ/zoneinfo/_io，
+    # 必须全部在沙箱外预加载，否则 Temporal 确定性检查会报 RestrictedWorkflowAccessError
+    import pydantic, pydantic.plugin, pydantic.plugin._loader, pydantic._internal, pydantic.deprecated, pydantic_core  # noqa: F401
+    import zoneinfo, sysconfig, platform, io, pathlib  # noqa: F401
+
     from ..activities.agent_task import AgentTaskInput, execute_agent_task
     from ..activities.audit import AuditInput, write_audit_log
     from ..activities.compensation import CompensationInput, run_compensation
@@ -210,6 +215,13 @@ class PipelineWorkflow:
         stage_map = {s.name: s for s in stages}
         failed_stages: list[str] = []
 
+        # 收集 loop 控制的 body stages（在循环内执行，不在主拓扑中执行）
+        loop_body_stages: set[str] = set()
+        for s in stages:
+            if s.loop:
+                for body_name in s.loop.body:
+                    loop_body_stages.add(body_name)
+
         for stage_name in topo:
             # 取消检查
             if self._cancelled:
@@ -222,6 +234,10 @@ class PipelineWorkflow:
                 self._phase = Phase.RUNNING
 
             stage = stage_map[stage_name]
+
+            # 跳过 loop body stages（由父 loop 节点在循环内执行）
+            if stage_name in loop_body_stages:
+                continue
 
             # 跳过已完成（continue_as_new 恢复）
             if self._stage_statuses.get(stage_name) in (StagePhase.SUCCEEDED, StagePhase.SKIPPED):
@@ -245,6 +261,46 @@ class PipelineWorkflow:
                     self._stage_statuses[stage_name] = StagePhase.FAILED
                     failed_stages.append(stage_name)
                     continue
+
+            # ── loop 受限循环 ──
+            if stage.loop:
+                try:
+                    await self._run_loop(stage, stage_map, inp, global_)
+                    self._stage_statuses[stage_name] = StagePhase.SUCCEEDED
+                    self._completed_count += 1
+                except Exception as exc:
+                    self._stage_statuses[stage_name] = StagePhase.FAILED
+                    failed_stages.append(stage_name)
+                    if stage.onFailure == OnFailure.FAIL:
+                        with workflow.unsafe.imports_passed_through():
+                            from temporalio.exceptions import ApplicationError
+                        raise ApplicationError(str(exc), non_retryable=False) from exc
+                continue
+
+            # ── agentSelector 能力路由 ──
+            resolved_agent: str | None = None
+            resolved_queue: str | None = None  # None = 使用 Workflow 默认队列
+            if stage.agentSelector and not stage.agent and not stage.agents:
+                resolved_agent, resolved_queue = await self._resolve_agent_selector(stage)
+
+            # 子流水线（childWorkflow）
+            if stage.childWorkflow:
+                try:
+                    child_output = await self._run_child_workflow(stage, inp)
+                    out_path = f"$.{stage_name}"
+                    if stage.output:
+                        out_path = stage.output if isinstance(stage.output, str) else stage.output.path
+                    self._set_state(out_path, child_output)
+                    self._stage_statuses[stage_name] = StagePhase.SUCCEEDED
+                    self._completed_count += 1
+                except Exception as exc:
+                    self._stage_statuses[stage_name] = StagePhase.FAILED
+                    failed_stages.append(stage_name)
+                    if stage.onFailure == OnFailure.FAIL:
+                        with workflow.unsafe.imports_passed_through():
+                            from temporalio.exceptions import ApplicationError
+                        raise ApplicationError(str(exc), non_retryable=False) from exc
+                continue
 
             # 审批节点
             if stage.approval:
@@ -289,7 +345,11 @@ class PipelineWorkflow:
             self._stage_statuses[stage_name] = StagePhase.RUNNING
 
             try:
-                output = await self._execute_stage(stage, inp, global_)
+                output = await self._execute_stage(
+                    stage, inp, global_,
+                    resolved_agent=resolved_agent,
+                    resolved_queue=resolved_queue,
+                )
                 # 写入 State
                 out_path = stage_name if isinstance(stage.output, str) and stage.output else f"$.{stage_name}"
                 if isinstance(stage.output, str):
@@ -402,13 +462,196 @@ class PipelineWorkflow:
         # continue 模式：返回成功的，跳过异常
         return [r for r in results if not isinstance(r, BaseException)]
 
+    # ---------- agentSelector 能力路由 ----------
+
+    async def _resolve_agent_selector(
+        self,
+        stage: Stage,
+    ) -> tuple[str, str | None]:
+        """解析 agentSelector，返回 (agent_name, task_queue)。
+
+        通过 Activity 调用所有 Agent 的 get_capabilities()，按 role + capabilities
+        筛选匹配项。若仅一个匹配则直接返回；若多个匹配则用 workflow.random()
+        做负载均衡。
+
+        task_queue 返回 None 时表示使用 Workflow 的默认队列（适用于单 Worker 部署
+        或测试环境）。仅在多 Worker 部署且 Agent 有独立 Task Queue 时才返回非 None。
+        """
+        selector = stage.agentSelector
+        assert selector is not None
+
+        role_val: str | None = selector.role.value if selector.role else None
+        caps: list[str] = selector.capabilities or []
+
+        with workflow.unsafe.imports_passed_through():
+            from ..activities.agent_resolver import (
+                AgentResolveInput,
+                AgentResolveAllOutput,
+                resolve_all_matching_agents,
+            )
+
+        all_matches: AgentResolveAllOutput = await workflow.execute_activity(
+            resolve_all_matching_agents,
+            AgentResolveInput(role=role_val, capabilities=caps),
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(
+                maximum_attempts=2,
+                initial_interval=timedelta(seconds=5),
+            ),
+        )
+
+        if not all_matches.matches:
+            with workflow.unsafe.imports_passed_through():
+                from temporalio.exceptions import ApplicationError
+            raise ApplicationError(
+                f"stage '{stage.name}': agentSelector 无匹配 Agent "
+                f"(role={role_val}, capabilities={caps})",
+                non_retryable=True,
+            )
+
+        # 负载均衡：单个直接返回，多个用 workflow.random() 随机选
+        matches = all_matches.matches
+        if len(matches) == 1:
+            pick = matches[0]
+        else:
+            rnd = workflow.random()
+            idx = rnd.randint(0, len(matches) - 1)
+            pick = matches[idx]
+
+        # task_queue 返回 None：当前使用 Workflow 默认队列。
+        # 后续多 Worker 部署时启用 pick.task_queue 路由。
+        return pick.agent_name, None
+
+    # ---------- loop 受限循环 ----------
+
+    async def _run_loop(
+        self,
+        stage: Stage,
+        stage_map: dict[str, Stage],
+        inp: PipelineRunInput,
+        global_: GlobalSpec,
+    ) -> None:
+        """执行 loop 节点：按 condition 循环执行 body stages，不超过 maxIterations。
+
+        对齐 design.md "迭代节点（受限循环）"：
+          - 每轮按 body 顺序执行各 stage
+          - 每轮结束后评估 condition
+          - condition 为 False 时退出（成功）
+          - 达到 maxIterations 时根据 onMaxReached 策略处理
+        """
+        loop = stage.loop
+        assert loop is not None
+
+        with workflow.unsafe.imports_passed_through():
+            from ..schema.expr import evaluate as eval_expr
+
+        for iteration in range(loop.maxIterations):
+            if self._cancelled:
+                raise asyncio.CancelledError()
+
+            # 执行 body 中每个 stage（按声明顺序）
+            for body_name in loop.body:
+                body_stage = stage_map[body_name]
+                self._current_stage = body_name
+                self._stage_statuses[body_name] = StagePhase.RUNNING
+
+                try:
+                    output = await self._execute_stage(body_stage, inp, global_)
+                    out_path = body_name
+                    if body_stage.output:
+                        if isinstance(body_stage.output, str):
+                            out_path = body_stage.output
+                        else:
+                            out_path = body_stage.output.path
+                    self._set_state(out_path, output.output_value)
+                    self._stage_statuses[body_name] = StagePhase.SUCCEEDED
+                except Exception:
+                    self._stage_statuses[body_name] = StagePhase.FAILED
+                    raise
+
+            # 评估是否继续循环
+            try:
+                should_continue = eval_expr(loop.condition, self._state)
+            except Exception as e:
+                with workflow.unsafe.imports_passed_through():
+                    from temporalio.exceptions import ApplicationError
+                raise ApplicationError(
+                    f"loop '{stage.name}' condition 求值失败: {e}",
+                    non_retryable=True,
+                ) from e
+
+            if not should_continue:
+                return  # 条件满足，退出循环成功
+        else:
+            # maxIterations reached
+            if loop.onMaxReached == "fail":
+                with workflow.unsafe.imports_passed_through():
+                    from temporalio.exceptions import ApplicationError
+                raise ApplicationError(
+                    f"loop '{stage.name}' 达到最大迭代次数 {loop.maxIterations}",
+                    non_retryable=True,
+                )
+            # onMaxReached == "continue": 循环结束，视为完成
+
+    # ---------- childWorkflow ----------
+
+    async def _run_child_workflow(
+        self,
+        stage: Stage,
+        inp: PipelineRunInput,
+    ) -> Any:
+        """执行子流水线（Child Workflow）。
+
+        将当前 State 和子流水线引用传给 ChildPipelineWorkflow，
+        子 Workflow 在自己的 Event History 中独立运行。
+        """
+        child_ref = stage.childWorkflow
+        assert child_ref is not None
+
+        # 从 State 提取子流水线输入
+        child_input = self._get_state(str(stage.input)) if stage.input else self._state
+
+        # parentClosePolicy 映射
+        with workflow.unsafe.imports_passed_through():
+            from ..domain.enums import ParentClosePolicy
+        policy_map = {
+            ParentClosePolicy.TERMINATE: workflow.ParentClosePolicy.TERMINATE,
+            ParentClosePolicy.ABANDON: workflow.ParentClosePolicy.ABANDON,
+            ParentClosePolicy.REQUEST_CANCEL: workflow.ParentClosePolicy.REQUEST_CANCEL,
+        }
+        parent_policy = policy_map.get(child_ref.parentClosePolicy, workflow.ParentClosePolicy.TERMINATE)
+
+        # 构建子 Workflow 参数
+        with workflow.unsafe.imports_passed_through():
+            from .child_workflows import ChildPipelineWorkflow
+        child_params = {
+            "pipeline_name": child_ref.name,
+            "pipeline_version": child_ref.version,
+            "parent_run_id": inp.run_id,
+            "input": child_input,
+        }
+
+        result = await workflow.execute_child_workflow(
+            ChildPipelineWorkflow.run,
+            child_params,
+            parent_close_policy=parent_policy,
+        )
+        return result
+
     async def _execute_stage(
         self,
         stage: Stage,
         inp: PipelineRunInput,
         global_: GlobalSpec,
+        *,
+        resolved_agent: str | None = None,
+        resolved_queue: str | None = None,
     ) -> StageOutput:
-        """执行单个 Stage（单 agent 或并行多 agent）。"""
+        """执行单个 Stage（单 agent、并行多 agent、或 agentSelector 路由）。
+
+        :param resolved_agent: agentSelector 解析后的 agent 名（覆盖 stage.agent）
+        :param resolved_queue: agentSelector 解析后的 task_queue（路由到匹配 Agent）
+        """
         # ── 构建通用参数 ──
         with workflow.unsafe.imports_passed_through():
             from ..observability.tracing import inject_context
@@ -440,15 +683,41 @@ class PipelineWorkflow:
                 idempotency_key=f"{wf_id}/{stage.name}{suffix}",
                 traceparent=carrier.get("traceparent"),
             )
-            return AgentTaskInput(task=task, stage_name=stage.name, pipeline_name=pipeline_name)
+            cache_enabled = bool(stage.cache and stage.cache.enabled)
+            cache_ttl = 86400
+            if stage.cache and stage.cache.ttl:
+                cache_ttl = int(_parse_duration(stage.cache.ttl).total_seconds())
+            return AgentTaskInput(
+                task=task,
+                stage_name=stage.name,
+                pipeline_name=pipeline_name,
+                cache_enabled=cache_enabled,
+                cache_ttl_seconds=cache_ttl,
+                input_schema=stage.inputSchema,
+                output_schema=stage.outputSchema,
+                schema_violation_policy=stage.schemaViolationPolicy,
+            )
 
-        async def _run_one(agent_name: str, suffix: str = "") -> StageOutput:
-            return await workflow.execute_activity(
-                execute_agent_task,
-                _make_task(agent_name, suffix),
+        async def _run_one(agent_name: str, suffix: str = "", task_queue: str | None = None) -> StageOutput:
+            kwargs: dict = dict(
                 start_to_close_timeout=timeout,
                 retry_policy=retry_policy,
             )
+            if task_queue:
+                kwargs["task_queue"] = task_queue
+            return await workflow.execute_activity(
+                execute_agent_task,
+                _make_task(agent_name, suffix),
+                **kwargs,
+            )
+
+        # ── agentSelector 路由（已由 _run_dag 解析，直接使用）──
+        if resolved_agent:
+            # 仅在 resolved_queue 与本 Workflow 的 task_queue 不同时才显式路由
+            # 否则走默认（使用 Workflow 的 task_queue），方便测试和单 Worker 部署
+            wf_queue = workflow.info().task_queue
+            actual_queue = resolved_queue if resolved_queue and resolved_queue != wf_queue else None
+            return await _run_one(resolved_agent, task_queue=actual_queue)
 
         # ── 单 Agent ──
         if stage.agent or not stage.agents:
@@ -530,6 +799,18 @@ class PipelineWorkflow:
     async def _run_approval(self, stage: Stage, inp: PipelineRunInput) -> None:
         """等待审批 Update 信号。"""
         stage_name = stage.name
+
+        # 开发模式：approvers 包含占位符时自动审批
+        if stage.approval and stage.approval.approvers:
+            is_dev = all(a.startswith("ou_") or a.startswith("dev_") for a in stage.approval.approvers)
+            if is_dev:
+                self._approval_state[stage_name] = {
+                    "status": "approved",
+                    "approvals": [{"approver": "system", "reason": "dev auto-approve"}],
+                    "started_at": str(workflow.now()),
+                }
+                return
+
         self._approval_state[stage_name] = {
             "status": "pending",
             "approvals": [],

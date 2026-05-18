@@ -24,6 +24,33 @@ import pytest_asyncio
 # 确保 src 在路径中
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+
+# ═══════════════════════════════════════════════════════════════
+# Temporal Sandbox 预加载：在 Workflow 沙箱初始化前将
+# os.environ 访问的模块加载到 sys.modules，避免 RestrictedWorkflowAccessError
+# ═══════════════════════════════════════════════════════════════
+def _preload_for_sandbox() -> None:
+    """预加载 Pydantic 及其传递依赖。"""
+    _MODULES = [
+        "pydantic", "pydantic.plugin", "pydantic.plugin._loader",
+        "pydantic._internal", "pydantic.deprecated", "pydantic_core",
+        "zoneinfo", "sysconfig", "platform", "io", "pathlib",
+        "json", "yaml", "datetime", "re", "typing", "copy",
+        "orchestra.domain.pipeline",
+        "orchestra.domain.agent",
+        "orchestra.domain.state",
+        "orchestra.domain.enums",
+        "orchestra.domain.errors",
+    ]
+    for mod in _MODULES:
+        try:
+            __import__(mod)
+        except ImportError:
+            pass
+
+
+_preload_for_sandbox()
+
 from orchestra.adapters.mock import MockAgentAdapter, MockBehavior
 from orchestra.adapters.registry import build_registry, load_profiles_from_yaml
 from orchestra.domain.enums import Role

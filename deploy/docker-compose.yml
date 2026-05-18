@@ -7,6 +7,8 @@ x-worker-base: &worker-base
   build:
     context: ..
     dockerfile: deploy/Dockerfile.worker
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
   depends_on:
     temporal-server:
       condition: service_healthy
@@ -20,17 +22,35 @@ x-worker-base: &worker-base
 
 services:
 
+  # ---------- Temporal 数据库 ----------
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+      POSTGRES_DB: temporal
+    ports: ["5433:5432"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   # ---------- Temporal 控制面 ----------
   temporal-server:
     image: temporalio/auto-setup:1.24
     environment:
-      DB: sqlite
-      SQLITE_PRAGMA_JOURNAL_MODE: WAL
-      SKIP_DB_CREATE: "false"
-      DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/dynamicconfig/development-sql.yaml
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: temporal
+      POSTGRES_SEEDS: postgres
     ports: ["7233:7233"]
-    volumes:
-      - temporal-data:/etc/temporal/sqlite
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "tctl", "--address", "temporal-server:7233", "cluster", "health"]
       interval: 10s
@@ -66,6 +86,8 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SERVER_ROOT_URL: "https://47.114.116.51/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
@@ -84,24 +106,24 @@ services:
   # ---------- 幂等键 / 缓存 ----------
   redis:
     image: redis:7.2-alpine
-    ports: ["6379:6379"]
+    ports: ["6380:6379"]
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-data:/data
 
   # ---------- Agent Workers（9 个 profile） ----------
-  worker-walnut:     {<<: *worker-base, environment: {PROFILE_NAME: walnut,     MCP_ENDPOINT: "mcp://host.docker.internal:18761"}}
-  worker-almond:     {<<: *worker-base, environment: {PROFILE_NAME: almond,     MCP_ENDPOINT: "mcp://host.docker.internal:18762"}}
-  worker-chestnut:   {<<: *worker-base, environment: {PROFILE_NAME: chestnut,   MCP_ENDPOINT: "mcp://host.docker.internal:18763"}}
-  worker-coconut:    {<<: *worker-base, environment: {PROFILE_NAME: coconut,    MCP_ENDPOINT: "mcp://host.docker.internal:18764"}}
-  worker-cherry:     {<<: *worker-base, environment: {PROFILE_NAME: cherry,     MCP_ENDPOINT: "mcp://host.docker.internal:18765"}}
-  worker-mango:      {<<: *worker-base, environment: {PROFILE_NAME: mango,      MCP_ENDPOINT: "mcp://host.docker.internal:18766"}}
-  worker-strawberry: {<<: *worker-base, environment: {PROFILE_NAME: strawberry, MCP_ENDPOINT: "mcp://host.docker.internal:18767"}}
-  worker-blueberry:  {<<: *worker-base, environment: {PROFILE_NAME: blueberry,  MCP_ENDPOINT: "mcp://host.docker.internal:18768"}}
-  worker-grape:      {<<: *worker-base, environment: {PROFILE_NAME: grape,      MCP_ENDPOINT: "mcp://host.docker.internal:18769"}}
+  worker-walnut:     {<<: *worker-base, environment: {TEMPORAL_HOST: temporal-server:7233, TEMPORAL_NAMESPACE: default, LOG_LEVEL: info, PROFILE_NAME: walnut,     MCP_ENDPOINT: "mcp://host.docker.internal:18761"}}
+  worker-almond:     {<<: *worker-base, environment: {TEMPORAL_HOST: temporal-server:7233, TEMPORAL_NAMESPACE: default, LOG_LEVEL: info, PROFILE_NAME: almond,     MCP_ENDPOINT: "mcp://host.docker.internal:18762"}}
+  worker-chestnut:   {<<: *worker-base, environment: {TEMPORAL_HOST: temporal-server:7233, TEMPORAL_NAMESPACE: default, LOG_LEVEL: info, PROFILE_NAME: chestnut,   MCP_ENDPOINT: "mcp://host.docker.internal:18763"}}
+  worker-coconut:    {<<: *worker-base, environment: {TEMPORAL_HOST: temporal-server:7233, TEMPORAL_NAMESPACE: default, LOG_LEVEL: info, PROFILE_NAME: coconut,    MCP_ENDPOINT: "mcp://host.docker.internal:18764"}}
+  worker-cherry:     {<<: *worker-base, environment: {TEMPORAL_HOST: temporal-server:7233, TEMPORAL_NAMESPACE: default, LOG_LEVEL: info, PROFILE_NAME: cherry,     MCP_ENDPOINT: "mcp://host.docker.internal:18765"}}
+  worker-mango:      {<<: *worker-base, environment: {TEMPORAL_HOST: temporal-server:7233, TEMPORAL_NAMESPACE: default, LOG_LEVEL: info, PROFILE_NAME: mango,      MCP_ENDPOINT: "mcp://host.docker.internal:18766"}}
+  worker-strawberry: {<<: *worker-base, environment: {TEMPORAL_HOST: temporal-server:7233, TEMPORAL_NAMESPACE: default, LOG_LEVEL: info, PROFILE_NAME: strawberry, MCP_ENDPOINT: "mcp://host.docker.internal:18767"}}
+  worker-blueberry:  {<<: *worker-base, environment: {TEMPORAL_HOST: temporal-server:7233, TEMPORAL_NAMESPACE: default, LOG_LEVEL: info, PROFILE_NAME: blueberry,  MCP_ENDPOINT: "mcp://host.docker.internal:18768"}}
+  worker-grape:      {<<: *worker-base, environment: {TEMPORAL_HOST: temporal-server:7233, TEMPORAL_NAMESPACE: default, LOG_LEVEL: info, PROFILE_NAME: grape,      MCP_ENDPOINT: "mcp://host.docker.internal:18769"}}
 
 volumes:
-  temporal-data:
+  postgres-data:
   prometheus-data:
   grafana-data:
   redis-data:

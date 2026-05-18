@@ -227,9 +227,22 @@ def _check_json_schema(data: dict[str, Any], report: ValidationReport) -> None:
     validator_cls = jsonschema.validators.validator_for(schema)
     validator_cls.check_schema(schema)
     validator = validator_cls(schema)
-    for err in validator.iter_errors(data):
+
+    # 递归去除 null 值（Pydantic model_dump 会把未设置的 optional 字段序列化为 null，
+    # 而 JSON Schema 的 type 约束不接受 null）
+    clean = _strip_none(data)
+    for err in validator.iter_errors(clean):
         path = " → ".join(str(p) for p in err.absolute_path) or "(root)"
         report.add_error(f"[{path}] {err.message}")
+
+
+def _strip_none(obj: Any) -> Any:
+    """递归去除 dict/list 中的 None 值。"""
+    if isinstance(obj, dict):
+        return {k: _strip_none(v) for k, v in obj.items() if v is not None}
+    if isinstance(obj, list):
+        return [_strip_none(v) for v in obj]
+    return obj
 
 
 def _check_timeout_order(

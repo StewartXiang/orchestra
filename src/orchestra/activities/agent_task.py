@@ -4,10 +4,17 @@
   1. 第一行 activity.heartbeat()
   2. 幂等键查询 + 写入（TTL 24h）
   3. 周期心跳 + is_cancelled() 检查
+
+Stage 缓存（跨 Run 复用 LLM 结果）：
+  当 stage.cache.enabled=True 时，Activity 在幂等键查询之后、调用 Agent 之前
+  检查内容缓存。命中则跳过 LLM 调用，直接返回缓存结果。
+  缓存键 = "cache:{pipeline_name}/{stage_name}/sha256(input_json)"
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from dataclasses import dataclass
 
@@ -16,6 +23,7 @@ from temporalio import activity
 from ..adapters.registry import get_adapter
 from ..domain.errors import OrchestraError
 from ..domain.state import Checkpoint, ProgressInfo, StageOutput, TaskInput, TaskOutput
+from ..observability.logging import get_logger
 from ..observability.metrics import (
     agent_task_total,
     record_llm_usage,
@@ -25,12 +33,19 @@ from ..observability.metrics import (
 from ..observability.tracing import carrier_from_traceparent, span
 from ..state.idempotency import get_store
 
+logger = get_logger(__name__)
+
 
 @dataclass
 class AgentTaskInput:
     task: TaskInput
     stage_name: str
     pipeline_name: str
+    cache_enabled: bool = False    # stage.cache.enabled
+    cache_ttl_seconds: int = 86400  # 默认 24h
+    input_schema: dict | None = None       # JSON Schema for input validation
+    output_schema: dict | None = None      # JSON Schema for output validation
+    schema_violation_policy: str = "fail"  # "fail" | "warn"
 
 
 @activity.defn
@@ -51,6 +66,26 @@ async def execute_agent_task(inp: AgentTaskInput) -> StageOutput:
     store = get_store()
     if cached := await store.get(idempotency_key):
         return StageOutput(**cached)
+
+    # ②-bis 跨 Run 缓存（Stage 级内容缓存，节省 LLM 成本）
+    cache_key: str | None = None
+    if inp.cache_enabled:
+        # 基于输入内容的缓存键（与 workflow_id 无关，跨 Run 复用）
+        input_hash = hashlib.sha256(
+            json.dumps(task.input, sort_keys=True, default=str).encode()
+        ).hexdigest()[:16]
+        cache_key = f"cache:{inp.pipeline_name}/{inp.stage_name}/{input_hash}"
+        if cached := await store.get(cache_key):
+            logger.info("stage_cache_hit", stage=inp.stage_name, cache_key=cache_key)
+            result = StageOutput(**cached)
+            # 也写入幂等键（同次 run 直接返回）
+            await store.put(idempotency_key, result.__dict__, ttl_seconds=86400)
+            return result
+
+    # ③-bis 输入 Schema 校验（在调 Agent 前）
+    if inp.input_schema and task.input is not None:
+        _validate_schema(task.input, inp.input_schema, inp.stage_name,
+                         "input", inp.schema_violation_policy)
 
     # 获取适配器
     adapter = get_adapter(task.agent_name)
@@ -122,6 +157,11 @@ async def execute_agent_task(inp: AgentTaskInput) -> StageOutput:
         ).observe(duration)
         agent_task_total.labels(profile=task.agent_name, status="success").inc()
 
+    # ③-ter 输出 Schema 校验（在调 Agent 后）
+    if inp.output_schema and output and output.output is not None:
+        _validate_schema(output.output, inp.output_schema, inp.stage_name,
+                         "output", inp.schema_violation_policy)
+
     completed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     result = StageOutput(
         stage_name=inp.stage_name,
@@ -138,4 +178,31 @@ async def execute_agent_task(inp: AgentTaskInput) -> StageOutput:
     # ④ 写幂等缓存
     await store.put(idempotency_key, result.__dict__, ttl_seconds=86400)
 
+    # ④-bis 写跨 Run 缓存
+    if cache_key:
+        await store.put(cache_key, result.__dict__, ttl_seconds=inp.cache_ttl_seconds)
+
     return result
+
+
+# ---------- Schema 校验辅助 ----------
+
+def _validate_schema(
+    data: object,
+    schema: dict,
+    stage_name: str,
+    direction: str,  # "input" | "output"
+    policy: str,    # "fail" | "warn"
+) -> None:
+    """用 JSON Schema 校验数据。"""
+    import jsonschema
+
+    try:
+        jsonschema.validate(data, schema, cls=jsonschema.Draft202012Validator)
+    except jsonschema.ValidationError as e:
+        msg = f"stage '{stage_name}' {direction} schema 校验失败: {e.message}"
+        if policy == "fail":
+            from ..domain.errors import SchemaViolation
+            raise SchemaViolation(msg)
+        else:
+            logger.warning("schema_violation", stage=stage_name, direction=direction, error=str(e))

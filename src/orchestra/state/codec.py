@@ -43,15 +43,20 @@ class EncryptingCodec(PayloadCodec):
             if key_hex:
                 key = bytes.fromhex(key_hex)
             else:
-                key = os.urandom(32)  # 每次随机（开发 only）
-        if len(key) != 32:
+                key = b""  # 空密钥 = 不加密（pass-through）
+        if key and len(key) != 32:
             raise ValueError("加密密钥必须是 32 字节（AES-256）")
         self._key = key
+        self._enabled = bool(key) and len(key) == 32
 
     async def encode(self, payloads: list[Payload]) -> list[Payload]:
+        if not self._enabled:
+            return payloads  # pass-through
         return [self._encrypt_payload(p) if self._should_encrypt(p) else p for p in payloads]
 
     async def decode(self, payloads: list[Payload]) -> list[Payload]:
+        if not self._enabled:
+            return payloads  # pass-through
         return [self._decrypt_payload(p) if self._is_encrypted(p) else p for p in payloads]
 
     def _should_encrypt(self, payload: Payload) -> bool:

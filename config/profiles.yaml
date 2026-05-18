@@ -9,7 +9,7 @@ profiles:
   walnut:
     role: developer
     capabilities: [python, godot, gdscript, git]
-    mcpEndpoint: "mcp://localhost:18761"
+    mcpEndpoint: "mcp://host.docker.internal:18761"
     model: deepseek-v4-pro
     tools: [godot_edit, file_read, file_write, git_commit, git_push, shell_run]
     labels: {team: core, language: python}
@@ -19,7 +19,7 @@ profiles:
   almond:
     role: tester
     capabilities: [python, pytest, coverage, playwright]
-    mcpEndpoint: "mcp://localhost:18762"
+    mcpEndpoint: "mcp://host.docker.internal:18762"
     model: deepseek-v4-pro
     tools: [pytest_run, file_read, shell_run, http_request]
     labels: {team: qa}
@@ -29,7 +29,7 @@ profiles:
   chestnut:
     role: developer
     capabilities: [python, web, fastapi, async]
-    mcpEndpoint: "mcp://localhost:18763"
+    mcpEndpoint: "mcp://host.docker.internal:18763"
     model: deepseek-v4-pro
     tools: [file_read, file_write, git_commit, shell_run, http_request]
     labels: {team: backend}
@@ -39,7 +39,7 @@ profiles:
   coconut:
     role: ci_engineer
     capabilities: [docker, deploy, k8s, terraform, ci]
-    mcpEndpoint: "mcp://localhost:18764"
+    mcpEndpoint: "mcp://host.docker.internal:18764"
     model: deepseek-v4-pro
     tools: [docker_run, kubectl_apply, deploy_action, shell_run]
     labels: {team: platform}
@@ -49,7 +49,7 @@ profiles:
   cherry:
     role: designer
     capabilities: [ui-design, figma, asset-export]
-    mcpEndpoint: "mcp://localhost:18765"
+    mcpEndpoint: "mcp://host.docker.internal:18765"
     model: deepseek-v4-pro
     tools: [figma_export, file_read, file_write, image_process]
     labels: {team: design}
@@ -59,7 +59,7 @@ profiles:
   mango:
     role: developer
     capabilities: [godot, gdscript, shader, gameplay]
-    mcpEndpoint: "mcp://localhost:18766"
+    mcpEndpoint: "mcp://host.docker.internal:18766"
     model: deepseek-v4-pro
     tools: [godot_edit, file_read, file_write, shader_compile]
     labels: {team: gameplay}
@@ -69,7 +69,7 @@ profiles:
   strawberry:
     role: tester
     capabilities: [playwright, ui-test, e2e, screenshot]
-    mcpEndpoint: "mcp://localhost:18767"
+    mcpEndpoint: "mcp://host.docker.internal:18767"
     model: deepseek-v4-pro
     tools: [playwright_run, screenshot_compare, http_request]
     labels: {team: qa}
@@ -79,7 +79,7 @@ profiles:
   blueberry:
     role: chat
     capabilities: [chat, summarize, translate, analyze]
-    mcpEndpoint: "mcp://localhost:18768"
+    mcpEndpoint: "mcp://host.docker.internal:18768"
     model: deepseek-v4-pro
     tools: [file_read, http_request, summarize]
     labels: {team: ops}
@@ -89,7 +89,7 @@ profiles:
   grape:
     role: standby
     capabilities: [generic, fallback]
-    mcpEndpoint: "mcp://localhost:18769"
+    mcpEndpoint: "mcp://host.docker.internal:18769"
     model: deepseek-v4-pro
     tools: [file_read, file_write, shell_run]
     labels: {team: ops}

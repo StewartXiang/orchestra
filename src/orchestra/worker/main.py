@@ -1,5 +1,8 @@
 """Worker 进程入口。
 
+Pydantic / Python stdlib 等模块的 import 会触发 os.environ 访问，
+必须在 Temporal 沙箱初始化前预加载，否则 workflow 确定性检查会报错。
+
 用法::
 
     python -m orchestra.worker.main
@@ -23,8 +26,36 @@ import os
 import sys
 from pathlib import Path
 
-# 确保 src 在 Python 路径中（直接执行时）
-sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
+# 确保 src 在 Python 路径中（直接执行时 / Docker 自适应）
+_p = Path(__file__).resolve()
+try:
+    sys.path.insert(0, str(_p.parents[min(4, len(_p.parents) - 1)]))
+except Exception:
+    pass
+
+# ⚠️ 在 Temporal 沙箱初始化前预加载所有会访问 os.environ 的模块
+# 这些模块的 import 顶层代码会调用 os.environ.get()，如果被 Temporal 沙箱拦截会报
+# RestrictedWorkflowAccessError。预加载后它们已在 sys.modules 中，沙箱不再拦截。
+def _preload_sandbox_unsafe_modules() -> None:
+    """预加载 Pydantic 及其传递依赖（import 时访问 os.environ/zoneinfo）。"""
+    to_load = [
+        "pydantic", "pydantic.plugin", "pydantic.plugin._loader",
+        "pydantic._internal", "pydantic.deprecated", "pydantic_core",
+        "zoneinfo", "sysconfig", "platform", "io", "pathlib",
+        "json", "yaml", "datetime", "re", "typing",
+    ]
+    for mod in to_load:
+        try:
+            __import__(mod)
+        except ImportError:
+            pass
+    # 再 import orchestra domain（会触发 pydantic model 验证）
+    try:
+        import orchestra.domain.pipeline  # noqa: F401
+    except ImportError:
+        pass
+
+_preload_sandbox_unsafe_modules()
 
 
 async def main() -> None:
@@ -72,9 +103,15 @@ async def main() -> None:
     from ..observability.audit import init_audit_writer
     init_audit_writer(f"audits-{profile_name}.db")
 
-    # 加载 profiles
+    # 加载 profiles（所有 worker 加载全部 9 个 profile，
+    # 因为 pipeline workflow 将所有 activity 发到同一 task queue）
     from ..adapters.registry import build_registry, load_profiles_from_yaml
-    config_dir = Path(__file__).resolve().parents[4] / "config"
+    # Docker: files at /app/config; dev: at <repo>/config
+    _candidates = [
+        Path("/app/config"),
+        Path(__file__).resolve().parents[3] / "config",
+    ]
+    config_dir = next((d for d in _candidates if d.is_dir()), _candidates[0])
     profiles = load_profiles_from_yaml(config_dir / "profiles.yaml")
 
     if profile_name not in profiles:
@@ -87,14 +124,18 @@ async def main() -> None:
 
     logger.info("worker_starting", profile=profile_name, task_queue=task_queue, temporal=temporal_host)
 
-    # Startup probe
+    # ⚠️ 将所有 profile 的 MCP endpoint 从 mcp://host:187xx 映射为 http://host:189xx
+    # 必须在 startup probe 之前完成（probe 使用映射后的端点）
+    for pname, p in profiles.items():
+        p.mcpEndpoint = p.mcpEndpoint.replace("mcp://", "http://").replace(":187", ":189")
+    mcp_endpoint = mcp_endpoint.replace("mcp://", "http://").replace(":187", ":189")
+    build_registry(profiles)
+
+    # Startup probe（使用映射后的端点）
     from ..worker.lifecycle import install_signal_handlers, startup_probe, wait_for_shutdown
     if not await startup_probe(mcp_endpoint):
         logger.error("startup_probe_failed", profile=profile_name)
         sys.exit(1)
-
-    # 构建 Adapter 注册表（真实 MCP 模式）
-    build_registry(profiles)
 
     # 连接 Temporal（带 pydantic_data_converter）
     from ..worker.registry import build_worker, make_client
