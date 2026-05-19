@@ -61,6 +61,9 @@ logs/
 tests/replay/fixtures/*.json
 !tests/replay/fixtures/README.md
 
+# 本地 issue（开发追踪，不进版本控制）
+.issues/
+
 # Claude Code 本地用户配置（项目级 settings.json 进版本控制；local 不进）
 .claude/settings.local.json
 .claude/.cache/

@@ -431,20 +431,73 @@ class PipelineWorkflow:
             backoff_coefficient=2.0,
         )
 
-        # 从 template 中取 agent_name
+        # 从 template 中取 agent 名（支持静态 agent 或 agentSelector）
         tmpl = dynamic.template if isinstance(dynamic.template, dict) else {}
-        agent_name = tmpl.get("agent", "grape")
+        static_agent = tmpl.get("agent")
+        has_selector = "agentSelector" in tmpl
+
+        # 模板展开函数（Workflow 内用 unsafe 绕过沙箱）
+        with workflow.unsafe.imports_passed_through():
+            from ..schema.template import render_dict
+            from ..activities.agent_resolver import (
+                AgentResolveInput,
+                AgentResolveAllOutput,
+                resolve_all_matching_agents,
+            )
+
+        # agentSelector 解析缓存：{(role, frozenset(caps)) → agent_name}
+        _selector_cache: dict[tuple, str] = {}
 
         # 信号量控制并行度
         max_parallel = dynamic.maxParallel or 1
         sem = asyncio.Semaphore(max_parallel)
 
+        async def _resolve_for_item(item: Any) -> str:
+            """为单个 item 解析 agent：优先 template agent，其次 agentSelector。"""
+            if static_agent:
+                # 模板展开 agent 名（如 "walnut-{{ item.area }}"）
+                expanded = render_dict(static_agent, {"item": item})
+                return str(expanded)
+
+            if has_selector:
+                # 模板展开 agentSelector 各字段
+                selector_raw = tmpl["agentSelector"]
+                selector_expanded = render_dict(selector_raw, {"item": item})
+                role = selector_expanded.get("role") if isinstance(selector_expanded, dict) else None
+                caps = selector_expanded.get("capabilities", []) if isinstance(selector_expanded, dict) else []
+                caps_key = frozenset(caps) if caps else frozenset()
+
+                cache_key = (role, caps_key)
+                if cache_key in _selector_cache:
+                    return _selector_cache[cache_key]
+
+                resolved: AgentResolveAllOutput = await workflow.execute_activity(
+                    resolve_all_matching_agents,
+                    AgentResolveInput(role=role, capabilities=list(caps_key)),
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=RetryPolicy(maximum_attempts=2),
+                )
+                if not resolved.matches:
+                    with workflow.unsafe.imports_passed_through():
+                        from temporalio.exceptions import ApplicationError
+                    raise ApplicationError(
+                        f"dynamic stage '{stage.name}': agentSelector 无匹配 "
+                        f"(role={role}, capabilities={list(caps_key)})",
+                        non_retryable=True,
+                    )
+                pick = resolved.matches[0].agent_name
+                _selector_cache[cache_key] = pick
+                return pick
+
+            return "grape"  # 兜底
+
         async def _run_item(idx: int, item: Any) -> Any:
             async with sem:
+                item_agent = await _resolve_for_item(item)
                 task = TaskInput(
                     workflow_id=wf_id,
                     stage_name=f"{stage.name}_{idx}",
-                    agent_name=agent_name,
+                    agent_name=item_agent,
                     role="developer",
                     tools=[],
                     input=item,

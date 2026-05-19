@@ -330,6 +330,46 @@ stages:
       agent: walnut
 ```
 
+### Review-driven 迭代循环
+
+```yaml
+# review Agent 输出结构化结果：{verdict: "pass"|"fail", issues: [{owner, ...}]}
+- name: review
+  agent: blueberry
+  output: "$.review"
+  outputSchema:
+    required: [verdict]
+    properties:
+      verdict: {enum: [pass, fail]}
+      issues:
+        items:
+          properties:
+            owner: {enum: [developer, designer, tester]}
+
+# fail 时，issue 按 owner 路由给对应 Agent
+- name: fix-review-issues
+  dependsOn: [review]
+  condition: 'review.verdict != "pass"'
+  dynamic:
+    generator: for_each
+    input: "$.review.issues"
+    template:
+      name: "fix-{{ item.id }}"
+      agentSelector:
+        role: "{{ item.owner }}"   # 动态路由：designer→cherry, developer→walnut
+
+# loop 包装：review → fix → test → review，直到 pass
+- name: review-loop
+  dependsOn: [review]
+  loop:
+    body: [fix-review-issues, test, review]
+    condition: 'review.verdict != "pass"'
+    maxIterations: 5
+    onMaxReached: fail
+```
+
+> 完整示例见 [`examples/review-driven.pipeline.yaml`](examples/review-driven.pipeline.yaml)
+
 ---
 
 ## 项目结构

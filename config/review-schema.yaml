@@ -1,0 +1,58 @@
+# ReviewResult / ReviewIssue — 标准 review 输出 Schema
+# 供 Pipeline YAML 中 stage.outputSchema 引用。
+#
+# 用法：
+#   - name: review
+#     outputSchema: {$ref: "config/review-schema.yaml#/ReviewResult"}
+#
+# ReviewResult: review 阶段的输出
+#   verdict:   "pass" | "fail"
+#   confidence: 0-1 的可信度
+#   issues:    发现的问题列表
+
+ReviewResult:
+  type: object
+  required: [verdict]
+  properties:
+    verdict:
+      type: string
+      enum: [pass, fail]
+    confidence:
+      type: number
+      minimum: 0
+      maximum: 1
+    summary:
+      type: string
+    issues:
+      type: array
+      items:
+        $ref: "#/ReviewIssue"
+
+ReviewIssue:
+  type: object
+  required: [id, severity, owner, problem]
+  properties:
+    id:
+      type: string
+      description: "问题唯一标识"
+    severity:
+      type: string
+      enum: [P0, P1, P2, P3]
+      description: "P0=阻断 P1=严重 P2=一般 P3=建议"
+    owner:
+      type: string
+      enum: [developer, designer, tester, artist]
+      description: "路由到哪个角色的 Agent"
+    area:
+      type: string
+      enum: [gameplay, visual, ui, technical, performance, audio, docs]
+    problem:
+      type: string
+      description: "问题描述"
+    suggestion:
+      type: string
+      description: "修复建议"
+    acceptance:
+      type: array
+      items: {type: string}
+      description: "验收条件列表"

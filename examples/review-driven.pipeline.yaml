@@ -1,0 +1,192 @@
+apiVersion: orchestra.io/v1
+kind: Pipeline
+metadata:
+  name: review-driven-dev
+  namespace: default
+  version: 1.0.0
+
+spec:
+  description: |
+    Review-driven 迭代开发流水线：
+    design → code → test → review → (fail → fix → test → review) → deploy
+
+    核心循环：
+      review Agent 产出结构化 ReviewResult（pass/fail + 可路由 issue 列表）
+      → fail 时 fix-review-issues 将 issue 按 owner 路由给对应 Agent
+      → 修复后 review-loop 重新 test + review
+      → 直到 pass 或达到 maxIterations
+
+  agents:
+    walnut:
+      role: developer
+      capabilities: [python, godot, gdscript, git]
+      mcpEndpoint: "mcp://localhost:18761"
+      tools: [godot_edit, file_read, file_write, git_commit, shell_run]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    cherry:
+      role: designer
+      capabilities: [ui-design, asset-export]
+      mcpEndpoint: "mcp://localhost:18765"
+      tools: [file_write, image_process]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    almond:
+      role: tester
+      capabilities: [python, pytest]
+      mcpEndpoint: "mcp://localhost:18762"
+      tools: [pytest_run, shell_run]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    blueberry:
+      role: chat
+      capabilities: [chat, summarize, analyze]
+      mcpEndpoint: "mcp://localhost:18768"
+      tools: [file_read, summarize]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    coconut:
+      role: ci_engineer
+      capabilities: [docker, deploy]
+      mcpEndpoint: "mcp://localhost:18764"
+      tools: [docker_run, deploy_action]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+  pipeline:
+    stages:
+      # ── 设计 ──
+      - name: design
+        agent: blueberry
+        input: "$.params.spec"
+        output: "$.design"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [task, ui_spec]
+          properties:
+            task: {type: string}
+            ui_spec: {type: string}
+
+      # ── 开发 + 美术（并行）──
+      - name: code
+        agent: walnut
+        dependsOn: [design]
+        input: "$.design.task"
+        output: "$.code"
+        timeouts: {startToClose: 30m, heartbeat: 30s}
+        sideEffects: [git, fs]
+
+      - name: art
+        agent: cherry
+        dependsOn: [design]
+        condition: "design.ui_spec != ''"
+        input: "$.design.ui_spec"
+        output: "$.art"
+        timeouts: {startToClose: 20m, heartbeat: 30s}
+
+      # ── 测试 ──
+      - name: test
+        agent: almond
+        dependsOn: [code, art]
+        input: "$.code"
+        output: "$.test"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [result]
+          properties:
+            result: {type: string, enum: [pass, fail]}
+            coverage: {type: number}
+            failures: {type: array}
+
+      # ── Review（结构化输出：pass/fail + 可路由 issue 列表）──
+      - name: review
+        agent: blueberry
+        dependsOn: [test]
+        input:
+          code: "$.code"
+          art: "$.art"
+          test: "$.test"
+        output: "$.review"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [verdict]
+          properties:
+            verdict: {type: string, enum: [pass, fail]}
+            confidence: {type: number}
+            summary: {type: string}
+            issues:
+              type: array
+              items:
+                type: object
+                required: [id, severity, owner, problem]
+                properties:
+                  id: {type: string}
+                  severity: {type: string, enum: [P0, P1, P2, P3]}
+                  owner: {type: string, enum: [developer, designer, tester]}
+                  area: {type: string}
+                  problem: {type: string}
+                  suggestion: {type: string}
+                  acceptance: {type: array, items: {type: string}}
+
+      # ── 按 owner 路由 issue 给对应 Agent ──
+      - name: fix-review-issues
+        dependsOn: [review]
+        condition: 'review.verdict != "pass"'
+        dynamic:
+          generator: for_each
+          input: "$.review.issues"
+          maxParallel: 3
+          maxItems: 50
+          onItemFailure: continue
+          aggregateOutput: "$.fixes"
+          template:
+            name: "fix-{{ item.id }}"
+            agentSelector:
+              role: "{{ item.owner }}"
+            input: "$.item"
+            output: "$.fix"
+            timeouts: {startToClose: 15m, heartbeat: 30s}
+
+      # ── Review 迭代循环 ──
+      - name: review-loop
+        dependsOn: [review]
+        loop:
+          body: [fix-review-issues, test, review]
+          condition: 'review.verdict != "pass"'
+          maxIterations: 5
+          onMaxReached: fail
+
+      # ── 部署 ──
+      - name: deploy
+        agent: coconut
+        dependsOn: [review-loop]
+        input: "$.code"
+        output: "$.deploy"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+        sideEffects: [deploy, network]
+        onFailure: compensate
+
+    compensation:
+      strategy: reverse
+      maxCompensationAttempts: 2
+      onCompensationFailure: alert
+      actions:
+        - {forStage: deploy, agent: coconut, action: rollback, runOn: any_failure}
+
+  parameters:
+    - name: spec
+      type: string
+      required: true
+      description: "产品需求规格说明"
+
+  global:
+    heartbeatInterval: 15s
+    maxConcurrency: 3
+    timeouts:
+      workflowExecution: 4h
+    notification:
+      channels: [feishu]
+      target: "ou_xxx"
+      onEvents: [failed, approval_pending, succeeded]
