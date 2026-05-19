@@ -67,3 +67,4 @@ tests/replay/fixtures/*.json
 
 # Docker
 *.pid
+.issues/
