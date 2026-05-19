@@ -107,6 +107,18 @@ spec:
           code: "$.code"
           art: "$.art"
           test: "$.test"
+        prompt: |
+          你是游戏项目的代码审查员。审查以下内容并给出 verdict。
+
+          审查标准：
+          1. 代码逻辑是否正确
+          2. UI 资产是否符合设计规范
+          3. 测试是否全部通过
+
+          必须以 submit_result tool 返回结构化结果。
+
+          输入：
+          {{ input }}
         output: "$.review"
         timeouts: {startToClose: 10m, heartbeat: 30s}
         outputSchema:

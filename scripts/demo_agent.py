@@ -76,9 +76,10 @@ def main() -> None:
                 task_input = body.get("input", "")
                 stage = body.get("stage", "unknown")
                 output_schema = body.get("output_schema")
+                prompt = body.get("prompt", "")
 
-                # 根据 stage 名生成合理的 mock 输出
-                output = _mock_output(stage, task_input, role, output_schema)
+                # 根据 stage 名 + prompt 生成合理的 mock 输出
+                output = _mock_output(stage, task_input, role, output_schema, prompt)
                 response_tool = body.get("response_tool")
 
                 # 如果提供了 response_tool，用 tool-call 格式返回
@@ -122,9 +123,20 @@ def _capabilities_for(role: str) -> list[str]:
     }.get(role, ["generic"])
 
 
-def _mock_output(stage: str, task_input: object, role: str, schema: dict | None) -> object:
-    """根据 stage 名生成有意义（而非固定）的模拟输出。"""
+def _mock_output(stage: str, task_input: object, role: str, schema: dict | None,
+                 prompt: str = "") -> object:
+    """根据 stage 名 + prompt 生成有意义的模拟输出。"""
     task_str = str(task_input) if isinstance(task_input, str) else json.dumps(task_input, ensure_ascii=False)
+
+    # 有 prompt 时，echo prompt 中的关键指令
+    if prompt and ("review" in stage or "test" in stage):
+        return {
+            "verdict": "pass",
+            "confidence": 0.95,
+            "summary": f"[DemoAgent:{role}] 已处理: {task_str[:80]}",
+            "issues": [],
+            "_prompt_used": prompt[:200],
+        }
 
     if "design" in stage or "review" in stage:
         return {

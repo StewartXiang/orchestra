@@ -69,6 +69,8 @@ class MCPAdapter:
             "tools": task.tools,
             "input": task.input,
         }
+        if task.prompt:
+            payload["prompt"] = task.prompt
         if task.output_schema:
             payload["output_schema"] = task.output_schema
             # response_tool 让 Agent 以 tool-call 方式提交结构化结果

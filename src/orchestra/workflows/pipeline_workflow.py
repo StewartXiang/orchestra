@@ -741,6 +741,16 @@ class PipelineWorkflow:
             timeout = _parse_duration(stage.timeouts.startToClose)
 
         def _make_task(agent_name: str, suffix: str = "") -> AgentTaskInput:
+            # 模板展开 stage.prompt（支持 {{ input }}, {{ stage }}, {{ params.* }}）
+            prompt_expanded: str | None = None
+            if stage.prompt:
+                with workflow.unsafe.imports_passed_through():
+                    from ..schema.template import render
+                prompt_expanded = render(
+                    stage.prompt,
+                    {"input": stage_input, "stage": stage.name, "params": inp.params},
+                )
+
             task = TaskInput(
                 workflow_id=wf_id,
                 stage_name=stage.name,
@@ -751,6 +761,7 @@ class PipelineWorkflow:
                 idempotency_key=f"{wf_id}/{stage.name}{suffix}",
                 traceparent=carrier.get("traceparent"),
                 output_schema=stage.outputSchema,
+                prompt=prompt_expanded,
             )
             cache_enabled = bool(stage.cache and stage.cache.enabled)
             cache_ttl = 86400

@@ -157,6 +157,7 @@ class Stage(BaseModel):
     outputSchema: dict[str, Any] | None = None
     schemaViolationPolicy: Literal["fail", "warn"] = "fail"
     requireUpstream: bool = False
+    prompt: str | None = None             # Agent prompt 注入（支持 {{ input }} 模板）
 
     # 执行控制
     timeouts: StageTimeouts | None = None

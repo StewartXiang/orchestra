@@ -170,6 +170,7 @@
         "outputSchema": {"type": "object"},
         "schemaViolationPolicy": {"type": "string", "enum": ["fail", "warn"], "default": "fail"},
         "requireUpstream": {"type": "boolean", "default": false},
+        "prompt": {"type": "string", "description": "Agent prompt 注入，支持 {{ input }} {{ stage }} {{ params.* }} 模板"},
         "timeouts": {"$ref": "#/$defs/StageTimeouts"},
         "retry": {"$ref": "#/$defs/RetryPolicy"},
         "aggregateStrategy": {"type": "string", "enum": ["all", "any", "first", "merge", "vote", "quorum"], "default": "all"},
