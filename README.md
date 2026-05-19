@@ -5,9 +5,10 @@
 > 声明式 YAML 定义流水线 → Temporal 驱动执行 → MCP 通信 Agent → Prometheus/OTel 可观测。
 
 <p align="center">
+  <a href="https://github.com/StewartXiang/orchestra/actions/workflows/ci.yml"><img src="https://github.com/StewartXiang/orchestra/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="Apache 2.0">
-  <img src="https://img.shields.io/badge/code-9.5K_lines-lightgrey.svg" alt="9.5K lines">
+  <img src="https://img.shields.io/badge/code-10.5K_lines-lightgrey.svg" alt="10.5K lines">
   <img src="https://img.shields.io/badge/agents-9-orange.svg" alt="9 agents">
   <img src="https://img.shields.io/badge/engine-Temporal-purple.svg" alt="Temporal">
   <img src="https://img.shields.io/badge/protocol-MCP-blueviolet.svg" alt="MCP">
@@ -372,6 +373,28 @@ runbook/       故障处置 SOP
 | 🍇 葡萄 grape | standby | generic, fallback | deepseek-v4-pro |
 
 ---
+
+## 实现进度
+
+| Phase | 内容 | 状态 |
+|-------|------|------|
+| P0 | domain 类型契约 | ✅ |
+| P1 | schema 解析 + DAG 校验 | ✅ |
+| P2 | state / adapters / observability | ✅ |
+| P3 | activities（agent_task / artifact / compensation） | ✅ |
+| P4 | workflows（signal / query / update / condition / parallel / dynamic / loop） | ✅ |
+| P5 | worker（lifecycle / registry / main） | ✅ |
+| P6 | CLI（19 个子命令） | ✅ |
+| P7 | 部署联调 + Replay fixture | ✅ |
+
+> 108 个测试，~10,500 行 Python。详细变更见 [`CHANGELOG.md`](CHANGELOG.md)。
+
+## 社区
+
+- [安全漏洞报告](SECURITY.md)
+- [行为准则](CODE_OF_CONDUCT.md)
+- [贡献指南](CONTRIBUTING.md)
+- 讨论区：[GitHub Issues](https://github.com/StewartXiang/orchestra/issues)
 
 ## 开发
 
