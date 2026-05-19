@@ -1,0 +1,4 @@
+FROM python:3.11-alpine
+COPY scripts/demo_agent.py /app/demo_agent.py
+ENV AGENT_ROLE=developer
+CMD python /app/demo_agent.py $AGENT_ROLE 18961

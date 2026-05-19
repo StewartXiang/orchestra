@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import click
 
+from .commands.init import init
 from .commands.validate import validate
 from .commands.dry_run import dry_run
 from .commands.submit import submit
@@ -36,6 +37,7 @@ def main(ctx: click.Context, host: str, namespace: str, output: str) -> None:
     ctx.obj["output"] = output
 
 
+main.add_command(init)
 main.add_command(validate)
 main.add_command(dry_run)
 main.add_command(submit)

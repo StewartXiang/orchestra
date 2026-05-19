@@ -1,0 +1,58 @@
+version: "3.9"
+
+# Agent Orchestra — 最小化 Demo 部署
+# 无需外部 Agent，clone 即可跑通完整流水线。
+#
+# 用法:
+#   docker compose -f deploy/docker-compose.demo.yml up -d
+#   orchestra submit examples/minimal-demo.pipeline.yaml --param task="hello"
+#   orchestra status --watch
+
+services:
+
+  # ---------- Temporal ----------
+  temporal:
+    image: temporalio/auto-setup:1.24
+    environment:
+      DB: sqlite
+    ports: ["7233:7233"]
+    healthcheck:
+      test: ["CMD", "tctl", "--address", "temporal:7233", "cluster", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  temporal-ui:
+    image: temporalio/ui:2.27
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:8080
+    ports: ["8080:8080"]
+    depends_on: [temporal]
+
+  # ---------- Demo Agent（内置 MCP mock）----------
+  demo-agent:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.demo-agent
+    ports: ["18961:18961"]
+    environment:
+      AGENT_ROLE: developer
+
+  # ---------- Worker ----------
+  worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.worker
+    environment:
+      PROFILE_NAME: demo
+      MCP_ENDPOINT: "http://demo-agent:18961"
+      TEMPORAL_HOST: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      LOG_LEVEL: info
+    depends_on:
+      temporal:
+        condition: service_healthy
+      demo-agent:
+        condition: service_started
+    restart: unless-stopped

@@ -213,43 +213,55 @@ flowchart TB
 
 ## 快速开始
 
-### 环境要求
+### 方式 A：Demo 模式（推荐首次体验，1 分钟跑通）
 
-- Python 3.11+
-- Docker + Docker Compose
-
-### 5 分钟跑通
+**无需任何外部 Agent。** 仓库自带 demo agent，`docker compose up` 即可体验完整流水线。
 
 ```bash
-# 1. 启动全套服务栈（Temporal + Prometheus + Grafana + 9 个 Agent Worker）
-docker compose -f deploy/docker-compose.yml up -d
+# 1. 启动 Demo 环境（Temporal + 内置 Demo Agent + Worker）
+docker compose -f deploy/docker-compose.demo.yml up -d
 
 # 2. 安装 CLI
 pip install -e .
 
-# 3. 校验流水线
-orchestra validate examples/minimal.pipeline.yaml
+# 3. 提交 Demo 流水线
+orchestra submit examples/minimal-demo.pipeline.yaml --param task="hello world"
 
-# 4. 预览 DAG（不执行）
-orchestra dry-run examples/minimal.pipeline.yaml
-
-# 5. 提交执行
-orchestra submit examples/minimal.pipeline.yaml --param task="hello world"
-
-# 6. 监控进度
+# 4. 查看结果
 orchestra status --watch
+open http://localhost:8080   # Temporal UI
+```
 
-# 7. 查看 Temporal Web UI
-open http://localhost:8080
+### 方式 B：生成你自己的流水线
+
+```bash
+# 交互式生成配置（询问项目名称、Agent、Stage）
+orchestra init
+
+# 验证并运行
+orchestra validate my-pipeline.pipeline.yaml
+orchestra dry-run  my-pipeline.pipeline.yaml
+orchestra submit   my-pipeline.pipeline.yaml --values values.yaml
+```
+
+### 方式 C：连接真实 Agent（生产部署）
+
+```bash
+# 1. 编辑 config/profiles.yaml，填入你的 Agent MCP endpoint
+# 2. 启动全套服务栈
+docker compose -f deploy/docker-compose.yml up -d
+
+# 3. 提交
+orchestra submit examples/game-dev.pipeline.yaml --param gdd="..."
 ```
 
 ### 面板地址
 
-| 面板 | 地址 | 说明 |
+| 面板 | Demo | 生产 |
 |------|------|------|
-| Temporal UI | http://localhost:8080 | 流水线执行历史、DAG 可视化 |
-| Grafana | http://localhost:3000 | 指标看板（admin/admin） |
-| Prometheus | http://localhost:9090 | 指标查询 |
+| Temporal UI | http://localhost:8080 | 同 |
+| Grafana | — | http://localhost:3000 |
+| Prometheus | — | http://localhost:9090 |
 
 ---
 
@@ -324,8 +336,9 @@ stages:
 docs/          需求 / 设计 / 架构 / 使用文档（共 4 份，3 万+ 字）
 schema/        JSON Schema（pipeline / pipeline-run / agent-profile）
 config/        Agent profiles + capabilities 词表
-examples/      示例流水线 + values 文件
-deploy/        Docker Compose + Prometheus + Grafana + OTel
+examples/      示例流水线（minimal-demo / game-dev / flappybird / parameterized）
+deploy/        Docker Compose（demo / 生产）+ Prometheus + Grafana + OTel
+scripts/       demo_agent.py（内置 mock Agent，开箱即用）
 src/
   domain/      领域模型（Agent / Pipeline / Stage / State / Errors）
   schema/      YAML 解析 / JSONPath / DAG 拓扑 / CEL 表达式 / 模板

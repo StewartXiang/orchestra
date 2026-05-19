@@ -1,0 +1,45 @@
+apiVersion: orchestra.io/v1
+kind: Pipeline
+metadata:
+  name: minimal-demo
+  namespace: default
+  version: 1.0.0
+
+spec:
+  description: |
+    最简 Demo 流水线：2 个 Stage，1 个 Agent。
+    适合首次体验 Orchestra —— 无需任何外部依赖。
+
+  agents:
+    demo:
+      role: developer
+      capabilities: [python, git]
+      mcpEndpoint: "mcp://demo-agent:18961"
+      tools: [file_read, file_write, shell_run]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+  pipeline:
+    stages:
+      - name: plan
+        agent: demo
+        input: "$.params.task"
+        output: "$.plan"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      - name: execute
+        agent: demo
+        dependsOn: [plan]
+        input: "$.plan.task"
+        output: "$.result"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+  parameters:
+    - name: task
+      type: string
+      required: true
+      description: "要完成的任务描述"
+
+  global:
+    heartbeatInterval: 15s
+    timeouts:
+      workflowExecution: 30m

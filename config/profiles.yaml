@@ -6,6 +6,16 @@ kind: AgentProfileSet
 # 也可通过 `agentSelector: { role: developer, capabilities: [godot] }` 按能力路由。
 profiles:
 
+  demo:
+    role: developer
+    capabilities: [python, git, shell]
+    mcpEndpoint: "mcp://demo-agent:18961"
+    model: demo
+    tools: [file_read, file_write, shell_run]
+    labels: {team: demo}
+    maxConcurrency: 4
+    description: "Orchestra 内置 Demo Agent — 开箱即用"
+
   walnut:
     role: developer
     capabilities: [python, godot, gdscript, git]
