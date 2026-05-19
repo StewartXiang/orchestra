@@ -89,7 +89,7 @@ flowchart LR
 
 ### 终端演示
 
-[![orchestra demo](https://img.shields.io/badge/demo-terminal-000?logo=windowsterminal)](https://github.com/StewartXiang/orchestra)
+[![asciicast](https://asciinema.org/a/pVxBxL1BR16pXFCB.svg)](https://asciinema.org/a/pVxBxL1BR16pXFCB)
 
 ```bash
 $ orchestra validate examples/flappybird.pipeline.yaml
