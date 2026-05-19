@@ -68,6 +68,51 @@ orchestra status --watch
 
 核桃写代码 → 栗子跑测试 → 椰子部署，一条命令，自动串起来。
 
+### 流水线执行流程
+
+```mermaid
+flowchart LR
+    A["📋 design-review<br/>blueberry"] --> B["💻 code<br/>walnut"]
+    A --> C["🎨 art<br/>cherry"]
+    B --> D["🧪 test<br/>almond"]
+    C --> D
+    D --> |"pass"| E["🖥️ ui-verify<br/>strawberry+grape"]
+    D --> |"fail"| F["🔍 diagnose<br/>blueberry"]
+    F --> G["🔧 fix-each<br/>dynamic × N"]
+    G --> D
+    E --> H["✋ deploy-approval<br/>人工审批"]
+    H --> I["🚀 deploy<br/>coconut"]
+```
+
+> **condition 分支** · **parallel fan-out** · **dynamic for_each** · **人工审批** · **失败补偿**
+
+### 终端演示
+
+[![orchestra demo](https://img.shields.io/badge/demo-terminal-000?logo=windowsterminal)](https://github.com/StewartXiang/orchestra)
+
+```bash
+$ orchestra validate examples/flappybird.pipeline.yaml
+✓ 校验通过 (0 errors, 0 warnings)
+
+$ orchestra dry-run examples/flappybird.pipeline.yaml --param gdd="复刻 Flappy Bird"
+  Topo: [design-review, code, art, test, diagnose, fix-each, ui-verify, deploy-approval, deploy]
+  Wave 1: [design-review]
+  Wave 2: [code, art]
+  Wave 3: [test]
+  Wave 4: [diagnose, ui-verify]
+  Wave 5: [deploy-approval]
+  Wave 6: [deploy]
+
+$ orchestra submit examples/flappybird.pipeline.yaml --param gdd="..."
+✓ submitted
+  workflow_id : flappybird-dev-3f7a2b1c
+  run_id      : 3f7a2b1c
+  task_queue  : agent-blueberry
+
+$ orchestra status --watch
+  phase=Succeeded  stage=deploy  progress=100%  eta=—
+```
+
 ---
 
 ## 解决什么痛点
@@ -101,18 +146,46 @@ orchestra status --watch
 
 ## 架构
 
+```mermaid
+flowchart TB
+    subgraph Config["配置层"]
+        YAML["pipeline.yaml<br/>声明式 DAG 定义"]
+    end
+
+    subgraph Orchestration["编排层 — Temporal Server"]
+        WF["PipelineWorkflow<br/>DAG 调度 · Signal · Update"]
+        ACT["Activities<br/>心跳 · 重试 · 幂等"]
+        SAGA["Saga 补偿"]
+    end
+
+    subgraph Execution["执行层 — Agent Workers"]
+        W1["🥜 walnut<br/>developer"]
+        W2["🧪 almond<br/>tester"]
+        W3["🌰 chestnut<br/>developer"]
+        W4["🥥 coconut<br/>ci_engineer"]
+        W5["🍒 cherry<br/>designer"]
+        W6["🥭 mango<br/>developer"]
+        W7["🍓 strawberry<br/>tester"]
+        W8["🫐 blueberry<br/>chat"]
+        W9["🍇 grape<br/>standby"]
+    end
+
+    subgraph Observability["可观测层"]
+        PROM["Prometheus<br/>指标"]
+        GRAF["Grafana<br/>看板"]
+        OTEL["OpenTelemetry<br/>追踪"]
+        AUDIT["审计日志<br/>SQLite"]
+    end
+
+    YAML --> WF
+    WF --> ACT
+    ACT --> W1 & W2 & W3 & W4 & W5 & W6 & W7 & W8 & W9
+    ACT --> SAGA
+    ACT -.-> PROM & OTEL & AUDIT
+    PROM --> GRAF
 ```
-用户 / CI/CD
-    │  orchestra CLI / API
-    ▼
-Temporal Server（编排内核）
-    │  SDK gRPC
-    ▼
-Agent Worker × 9（各对应一个 MCP Agent）
-    │  MCP HTTP
-    ▼
-LLM Agent（核桃 / 杏仁 / 栗子 / 椰子 / 樱桃 / 芒果 / 草莓 / 蓝莓 / 葡萄）
-```
+
+> 四层架构对标 Kubernetes 控制面/数据面分离。编排层用 Temporal 做持久化执行内核，Agent 通过 MCP 协议零侵入接入。
 
 ### 技术选型
 

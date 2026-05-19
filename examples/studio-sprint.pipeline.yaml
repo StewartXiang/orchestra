@@ -1,0 +1,277 @@
+apiVersion: orchestra.io/v1
+kind: Pipeline
+metadata:
+  name: gamedev-studio
+  namespace: flappybird
+  version: 2.0.0
+  labels:
+    project: flappybird
+    env: dev
+    team: full-studio
+  annotations:
+    owner: "studio@abyss-game.dev"
+    docs: "https://wiki/pipelines/gamedev-studio"
+
+spec:
+  description: |
+    真实游戏工作室流水线 — 模拟 9 人团队协作完成一个 feature sprint。
+    人员配置参考中小型独立工作室（5-15 人规模）：
+
+    ┌────────── 制作团队 ──────────┐
+    │ 🫐 blueberry  — 制作人        │  需求评审、任务拆分、里程碑签批
+    │ 🥭 mango      — 主策划        │  玩法设计文档、数值平衡
+    ├────────── 程序团队 ──────────┤
+    │ 🥜 walnut     — 主程序        │  架构设计、代码审查、集成
+    │ 🌰 chestnut   — 玩法程序      │  功能实现、gameplay 编码
+    ├────────── 美术团队 ──────────┤
+    │ 🍒 cherry     — 主美          │  视觉方向、资产制作
+    ├────────── 质量保证 ──────────┤
+    │ 🧪 almond     — QA 负责人     │  测试策略、自动化测试
+    │ 🍓 strawberry — QA 测试员 A   │  功能测试、截图验证
+    │ 🍇 grape      — QA 测试员 B   │  双视角并行验证（vote 策略）
+    ├────────── 运维 ──────────────┤
+    │ 🥥 coconut    — 构建/发布     │  打包、部署
+    └──────────────────────────────┘
+
+    各岗位职责参考：
+    - Producer (blueberry): 类似 Ubisoft/EA 的 Associate Producer
+    - Lead Designer (mango): 类似 Supercell 的 Game Designer
+    - Lead Programmer (walnut): 类似独立团队的 Technical Lead
+    - Gameplay Programmer (chestnut): 类似一般工作室的 Gameplay Engineer
+    - Art Director (cherry): 类似独立团队的 Solo Artist
+    - QA Lead (almond): 类似任天堂的 Debug Lead
+    - QA Testers (strawberry/grape): 双人交叉验证，类似 Microsoft 的 SDET pair
+    - DevOps (coconut): 类似 CI/CD 工程师，负责构建管线
+
+  agents:
+
+    # ── 制作团队 ──
+    blueberry:
+      role: chat
+      capabilities: [chat, summarize, analyze, task-breakdown]
+      mcpEndpoint: "mcp://host.docker.internal:18768"
+      tools: [file_read, summarize, task_plan]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    mango:
+      role: developer
+      capabilities: [godot, gdscript, shader, gameplay, design-doc]
+      mcpEndpoint: "mcp://host.docker.internal:18766"
+      tools: [godot_edit, file_read, file_write, shader_compile, design_spec]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    # ── 程序团队 ──
+    walnut:
+      role: developer
+      capabilities: [python, godot, gdscript, git, architecture]
+      mcpEndpoint: "mcp://host.docker.internal:18761"
+      tools: [godot_edit, file_read, file_write, git_commit, git_push, shell_run]
+      maxConcurrency: 2
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+      retry: {maxAttempts: 3, backoff: exponential, initialInterval: 10s, maxInterval: 5m}
+
+    chestnut:
+      role: developer
+      capabilities: [python, web, fastapi, async, gameplay]
+      mcpEndpoint: "mcp://host.docker.internal:18763"
+      tools: [file_read, file_write, git_commit, shell_run, http_request]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    # ── 美术团队 ──
+    cherry:
+      role: designer
+      capabilities: [ui-design, asset-export, godot]
+      mcpEndpoint: "mcp://host.docker.internal:18765"
+      tools: [godot_edit, file_write, image_process]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    # ── 质量保证 ──
+    almond:
+      role: tester
+      capabilities: [python, pytest, test-strategy]
+      mcpEndpoint: "mcp://host.docker.internal:18762"
+      tools: [pytest_run, file_read, shell_run]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    strawberry:
+      role: tester
+      capabilities: [playwright, ui-test, screenshot, manual-test]
+      mcpEndpoint: "mcp://host.docker.internal:18767"
+      tools: [playwright_run, screenshot_compare]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    grape:
+      role: tester
+      capabilities: [playwright, ui-test, generic, regression]
+      mcpEndpoint: "mcp://host.docker.internal:18769"
+      tools: [playwright_run, screenshot_compare, file_read]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    # ── 运维 ──
+    coconut:
+      role: ci_engineer
+      capabilities: [docker, deploy, git, ci, build]
+      mcpEndpoint: "mcp://host.docker.internal:18764"
+      tools: [docker_run, shell_run, deploy_action, file_read]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+  pipeline:
+    stages:
+
+      # ── Phase 1: 制作人评审 ──
+      - name: producer-review
+        agent: blueberry
+        input: "$.params.feature_req"
+        output: "$.producer"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [task_breakdown, requires_design, requires_art, priority]
+          properties:
+            task_breakdown: {type: string}
+            requires_design: {type: boolean}
+            requires_art: {type: boolean}
+            priority: {type: string, enum: [low, normal, high, critical]}
+
+      # ── Phase 2: 策划设计 ──
+      - name: design-workshop
+        agent: mango
+        dependsOn: [producer-review]
+        condition: "producer.requires_design"
+        input: "$.producer.task_breakdown"
+        output: "$.design"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [feature_name]
+          properties:
+            feature_name: {type: string}
+            design_overview: {type: string}
+            mechanics: {type: array}
+            balance_params: {type: object}
+
+      # ── Phase 3a: 架构设计（主程序）──
+      - name: architecture-review
+        agent: walnut
+        dependsOn: [producer-review]
+        input: "$.producer.task_breakdown"
+        output: "$.architecture"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+        cache: {enabled: true, ttl: 24h}
+
+      # ── Phase 3b: 美术方向（条件：有美术需求）──
+      - name: art-direction
+        agent: cherry
+        dependsOn: [design-workshop]
+        condition: "producer.requires_art"
+        input: "$.design"
+        output: "$.art_brief"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+
+      # ── Phase 4: 功能实现（玩法程序）──
+      - name: implementation
+        agent: chestnut
+        dependsOn: [architecture-review, art-direction]
+        input: "$.architecture"
+        output: "$.implementation"
+        timeouts: {startToClose: 20m, heartbeat: 30s}
+        sideEffects: [git, fs]
+
+      # ── Phase 5: 代码审查 + 集成（主程序）──
+      - name: code-review
+        agent: walnut
+        dependsOn: [implementation]
+        input: "$.implementation"
+        output: "$.review"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+
+      # ── Phase 6: QA 自动化测试 ──
+      - name: automated-qa
+        agent: almond
+        dependsOn: [code-review]
+        input: "$.review"
+        output: "$.qa"
+        outputSchema:
+          type: object
+          required: [result, coverage]
+          properties:
+            result: {type: string, enum: [pass, fail]}
+            coverage: {type: number}
+            details: {type: object}
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+
+      # ── Phase 7: 缺陷诊断（测试失败时触发）──
+      - name: bug-triage
+        agent: blueberry
+        dependsOn: [automated-qa]
+        condition: 'qa.result != "pass"'
+        input: "$.qa"
+        output: "$.bugs"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      # ── Phase 8: 并行修 bug ──
+      - name: fix-bugs
+        agent: chestnut
+        dependsOn: [bug-triage]
+        condition: 'size(bugs) > 0'
+        input: "$.bugs"
+        output: "$.fixes"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+
+      # ── Phase 9: QA 双视角 UI 验证 ──
+      - name: visual-qa
+        agents: [strawberry, grape]
+        dependsOn: [automated-qa, fix-bugs]
+        input: "$.implementation"
+        output: "$.visual_qa"
+        aggregateStrategy: vote
+        timeouts: {startToClose: 20m, heartbeat: 30s}
+
+      # ── Phase 10: 制作人签批 ──
+      - name: producer-signoff
+        dependsOn: [visual-qa]
+        approval:
+          approvers: ["ou_xxx"]
+          policy: any
+          message: "QA 全部通过，是否发布？"
+          timeout: 1h
+          onTimeout: reject
+
+      # ── Phase 11: 构建发布 ──
+      - name: build-and-ship
+        agent: coconut
+        dependsOn: [producer-signoff]
+        input: "$.implementation"
+        output: "$.release"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+        sideEffects: [deploy, network]
+        onFailure: compensate
+
+    compensation:
+      strategy: reverse
+      maxCompensationAttempts: 2
+      onCompensationFailure: alert
+      actions:
+        - {forStage: build-and-ship, agent: coconut, action: rollback, runOn: any_failure}
+
+  parameters:
+    - name: feature_req
+      type: string
+      required: true
+      description: "Feature 需求描述（来自策划/制作人）"
+
+  secrets:
+    - {name: llm-api-key, fromEnv: LLM_API_KEY}
+
+  global:
+    heartbeatInterval: 15s
+    maxConcurrency: 4
+    timeouts:
+      workflowExecution: 2h
+    notification:
+      channels: [feishu]
+      target: "ou_xxx"
+      onEvents: [failed, approval_pending, succeeded]
+    artifactsBasePath: "/opt/agent-orchestra/artifacts"
+    priority: normal
+    retention: {historyDays: 30, artifactsDays: 7}
