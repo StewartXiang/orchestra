@@ -90,7 +90,7 @@ flowchart LR
 
 ### 终端演示
 
-[![asciicast](https://asciinema.org/a/pVxBxL1BR16pXFCB.svg)](https://asciinema.org/a/pVxBxL1BR16pXFCB)
+[![asciicast](https://asciinema.org/a/sRuGwzeKLYLz0QM8.svg)](https://asciinema.org/a/sRuGwzeKLYLz0QM8)
 
 ```bash
 $ orchestra validate examples/flappybird.pipeline.yaml
