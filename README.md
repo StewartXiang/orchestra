@@ -6,6 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/StewartXiang/orchestra/actions/workflows/ci.yml"><img src="https://github.com/StewartXiang/orchestra/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://pypi.org/project/orchestra-agent/"><img src="https://img.shields.io/pypi/v/orchestra-agent.svg" alt="PyPI"></a>
   <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="Apache 2.0">
   <img src="https://img.shields.io/badge/code-10.5K_lines-lightgrey.svg" alt="10.5K lines">
@@ -223,7 +224,7 @@ flowchart TB
 docker compose -f deploy/docker-compose.demo.yml up -d
 
 # 2. 安装 CLI
-pip install -e .
+pip install orchestra-agent
 
 # 3. 提交 Demo 流水线
 orchestra submit examples/minimal-demo.pipeline.yaml --param task="hello world"
