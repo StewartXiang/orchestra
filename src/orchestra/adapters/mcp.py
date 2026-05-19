@@ -71,6 +71,16 @@ class MCPAdapter:
         }
         if task.output_schema:
             payload["output_schema"] = task.output_schema
+            # response_tool 让 Agent 以 tool-call 方式提交结构化结果
+            # LLM 对 tool calling 的格式遵守度远高于自由 JSON
+            payload["response_tool"] = {
+                "name": "submit_result",
+                "description": (
+                    "完成任务后调用此 tool 提交最终结果。"
+                    "参数必须严格匹配 output_schema。不要返回自由文本，必须调用此 tool。"
+                ),
+                "parameters": task.output_schema,
+            }
         if resume_from:
             payload["resume_from"] = {
                 "step": resume_from.step,

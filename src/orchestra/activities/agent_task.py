@@ -157,7 +157,11 @@ async def execute_agent_task(inp: AgentTaskInput) -> StageOutput:
         ).observe(duration)
         agent_task_total.labels(profile=task.agent_name, status="success").inc()
 
-    # ③-ter 输出 Schema 校验（在调 Agent 后）
+    # ③-ter 提取结构化输出（Agent 通过 submit_result tool 返回）
+    if output and output.output is not None:
+        output.output = _extract_structured_output(output.output, inp.stage_name)
+
+    # ③-quater 输出 Schema 校验（在调 Agent 后）
     if inp.output_schema and output and output.output is not None:
         _validate_schema(output.output, inp.output_schema, inp.stage_name,
                          "output", inp.schema_violation_policy)
@@ -183,6 +187,78 @@ async def execute_agent_task(inp: AgentTaskInput) -> StageOutput:
         await store.put(cache_key, result.__dict__, ttl_seconds=inp.cache_ttl_seconds)
 
     return result
+
+
+# ---------- 结构化输出提取 ----------
+
+
+def _extract_structured_output(
+    raw: object,
+    stage_name: str,
+) -> object:
+    """从 Agent 返回中提取结构化结果。
+
+    支持三种格式（按优先级）：
+      1. tool-call: {"tool_calls": [{"name": "submit_result", "arguments": {...}}]}
+      2. OpenAI function: {"name": "submit_result", "arguments": {...}}
+      3. 直接 JSON 对象（照原样返回）
+
+    如果识别出 submit_result tool call，提取其中的 arguments 作为结构化输出。
+    """
+    if not isinstance(raw, dict):
+        return raw
+
+    # 格式 1: Anthropic/通用 tool_use
+    for tool_key in ("tool_calls", "tool_use", "tool_call"):
+        if tool_key in raw:
+            calls = raw[tool_key]
+            if isinstance(calls, list):
+                for call in calls:
+                    if isinstance(call, dict):
+                        if call.get("name") == "submit_result" or call.get("function", {}).get("name") == "submit_result":
+                            args = call.get("arguments") or call.get("function", {}).get("arguments")
+                            if isinstance(args, str):
+                                import json
+                                try:
+                                    args = json.loads(args)
+                                except json.JSONDecodeError:
+                                    pass
+                            if isinstance(args, dict):
+                                logger.info("extracted_tool_call", stage=stage_name, tool="submit_result")
+                                return args
+            break  # 只检查第一层 tool_calls
+
+    # 格式 2: 顶层直接是 submit_result
+    if raw.get("name") == "submit_result":
+        args = raw.get("arguments") or raw.get("parameters") or raw.get("input") or {}
+        if isinstance(args, str):
+            import json
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                pass
+        if isinstance(args, dict):
+            logger.info("extracted_tool_call", stage=stage_name, tool="submit_result")
+            return args
+
+    # 格式 3: 嵌套在 result/output 中
+    for container_key in ("result", "output", "response"):
+        if container_key in raw and isinstance(raw[container_key], dict):
+            inner = raw[container_key]
+            if inner.get("name") == "submit_result":
+                args = inner.get("arguments") or inner.get("parameters") or {}
+                if isinstance(args, str):
+                    import json
+                    try:
+                        args = json.loads(args)
+                    except json.JSONDecodeError:
+                        pass
+                if isinstance(args, dict):
+                    logger.info("extracted_tool_call", stage=stage_name, tool="submit_result")
+                    return args
+
+    # 默认：原样返回
+    return raw
 
 
 # ---------- Schema 校验辅助 ----------

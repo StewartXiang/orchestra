@@ -370,6 +370,33 @@ stages:
 
 > 完整示例见 [`examples/review-driven.pipeline.yaml`](examples/review-driven.pipeline.yaml)
 
+### 结构化输出（response_tool）
+
+Orchestra 向 Agent 注入 `response_tool`，Agent 以 tool-call 方式提交结果：
+
+```json
+// Orchestra → Agent
+{
+  "input": {...},
+  "output_schema": {"type": "object", "required": ["verdict"], ...},
+  "response_tool": {
+    "name": "submit_result",
+    "description": "调用此 tool 提交最终结果",
+    "parameters": <output_schema>
+  }
+}
+
+// Agent → Orchestra（自动识别 tool_calls/tool_use/function call 格式）
+{
+  "tool_calls": [{
+    "name": "submit_result",
+    "arguments": {"verdict": "pass", "issues": [...]}
+  }]
+}
+```
+
+> **LLM 对 tool calling 的格式遵守度远高于自由 JSON。** Orchestra 自动提取 `submit_result` 的 arguments，然后做 schema 校验。
+
 ---
 
 ## 项目结构

@@ -79,13 +79,25 @@ def main() -> None:
 
                 # 根据 stage 名生成合理的 mock 输出
                 output = _mock_output(stage, task_input, role, output_schema)
+                response_tool = body.get("response_tool")
 
-                self._json(200, {
-                    "output": output,
+                # 如果提供了 response_tool，用 tool-call 格式返回
+                if response_tool:
+                    result = {
+                        "tool_calls": [{
+                            "name": "submit_result",
+                            "arguments": output,
+                        }],
+                    }
+                else:
+                    result = {"output": output}
+
+                result.update({
                     "tokens_consumed": len(str(task_input)) // 4 + 50,
                     "cost_usd": 0.001,
                     "duration_seconds": 0.05,
                 })
+                self._json(200, result)
             elif self.path == "/cancel":
                 self._json(200, {"cancelled": True})
             else:
