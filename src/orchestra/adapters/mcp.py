@@ -118,11 +118,31 @@ class MCPAdapter:
             ))
 
         duration = time.monotonic() - start
+
+        # MCP Response Contract — Agent 必须返回以下结构之一：
+        #   1. {"output": <any>, "tokens_consumed"?: int, "cost_usd"?: float}
+        #   2. {"tool_calls": [{"name": "submit_result", "arguments": {...}}], ...}
+        #   3. {"result": <any>, ...}  → 兼容旧格式
+        output_raw = data.get("output") or data.get("result")
+
+        # 如果 Agent 返回了 tool_calls 格式，提取 submit_result 的 arguments
+        if output_raw is None:
+            for key in ("tool_calls", "tool_use", "tool_call"):
+                calls = data.get(key)
+                if isinstance(calls, list):
+                    for call in calls:
+                        if isinstance(call, dict) and call.get("name") == "submit_result":
+                            output_raw = call.get("arguments") or call.get("parameters")
+                            break
+                    if output_raw is not None:
+                        break
+
         return TaskOutput(
-            output=data.get("output"),
+            output=output_raw,
             tokens_consumed=data.get("tokens_consumed", 0),
             cost_usd=data.get("cost_usd", 0.0),
             duration_seconds=duration,
+            metadata=data.get("metadata", {}),
         )
 
     async def check_health(self) -> AgentHealth:
