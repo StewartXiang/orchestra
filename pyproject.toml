@@ -1,5 +1,5 @@
 [project]
-name = "orchestra"
+name = "agent-orchestra"
 version = "0.1.0"
 description = "AI Agent 流水线编排引擎（Temporal + 自研 DSL + MCP）"
 readme = "README.md"
