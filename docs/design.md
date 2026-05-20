@@ -162,7 +162,7 @@ spec:
   pipeline:
     stages:
       - name: code                       # 节点名称（流水线内唯一，DNS-1123）
-        # ----- 执行体（七选一）-----
+        # ----- 执行体（八选一）-----
         agent: walnut                    # (1) 单 agent
         agents: [s1, s2]                 # (2) 并行 agents
         agentSelector:                   # (3) 按能力路由（与 agent / agents 互斥或组合用作过滤）
@@ -181,6 +181,15 @@ spec:
           ...
         loop:                            # (7) 受限循环
           body: [test, fix]
+          ...
+        reviewGate:                      # (8) 评审门禁
+          agent: blueberry
+          outputSchema:
+            $ref: "config/review-schema.yaml#/ReviewResult"
+          maxIterations: 5
+          routing:
+            developer: walnut
+          retest: [test]
           ...
 
         # ----- 调度 -----
@@ -375,6 +384,7 @@ orchestra submit pipeline.yaml --param target_env=prod --param skip_tests=false
 8. Map-Reduce：split → [worker1..N] → aggregate
 9. 子流水线：通过 childWorkflow 引用，支持递归（编译期检测死循环）
 10. 迭代 / 循环：while condition do stage（受限循环，最大迭代数强制声明）
+11. Review Gate：review → fail? → route-by-owner → fix → retest → rereview（评审门禁闭环）
 ```
 
 ### 迭代节点（受限循环）
@@ -391,6 +401,120 @@ AI Agent 场景常见 "test → fix → test → fix" 循环，对标 LangGraph 
 ```
 
 引擎将其展开为 Temporal Workflow 的 `while` 循环，每次迭代独立计数。
+
+### Review Gate（评审门禁）
+
+Review Gate 将 review 从"文本建议"提升为"状态机门禁"，是 review-driven iteration loop 的核心机制。
+
+**核心概念**：
+
+1. **结构化 Review 输出**：Review Agent 通过 `outputSchema` 产出 `ReviewResult` 对象，包含 `verdict`（pass/fail）和可路由 `issues` 列表
+2. **硬门禁**：`verdict = "fail"` 时 Pipeline 不会继续，必须进入修复循环
+3. **按 Owner 自动路由**：每个 `ReviewIssue` 的 `owner` 字段决定路由目标（developer → 开发 Agent，designer → 设计 Agent，artist → 美术 Agent，tester → 测试 Agent）
+4. **验收驱动**：每个 issue 可附带 `acceptance`（验收条件列表），修复 Agent 必须满足验收条件
+5. **迭代上限**：强制 `maxIterations` 防止死循环
+
+**ReviewResult / ReviewIssue Schema**：
+
+```yaml
+# config/review-schema.yaml
+ReviewResult:
+  type: object
+  required: [verdict]
+  properties:
+    verdict:
+      type: string
+      enum: [pass, fail]
+    confidence:
+      type: number
+      minimum: 0
+      maximum: 1
+    summary:
+      type: string
+    issues:
+      type: array
+      items:
+        $ref: "#/ReviewIssue"
+
+ReviewIssue:
+  type: object
+  required: [id, severity, owner, problem]
+  properties:
+    id: {type: string, description: "问题唯一标识"}
+    severity: {type: string, enum: [P0, P1, P2, P3]}
+    owner: {type: string, enum: [developer, designer, tester, artist]}
+    area: {type: string, enum: [gameplay, visual, ui, technical, performance, audio, docs]}
+    problem: {type: string}
+    suggestion: {type: string}
+    acceptance: {type: array, items: {type: string}}
+```
+
+**两种使用方式**：
+
+方式 1 — `reviewGate` 一等字段（推荐用于 review-centric pipeline）：
+
+```yaml
+- name: quality-gate
+  reviewGate:
+    agent: blueberry
+    input:
+      code: "$.code"
+      test: "$.test"
+      art: "$.art"
+    prompt: "Review the game build for quality issues..."
+    outputSchema:
+      $ref: "config/review-schema.yaml#/ReviewResult"
+    maxIterations: 5
+    routing:
+      developer: walnut
+      designer: cherry
+      artist: cherry
+      tester: almond
+    retest: [test, ui-verify]
+```
+
+方式 2 — 组合 `loop` + `outputSchema`（更灵活）：
+
+```yaml
+# review stage 声明结构化输出
+- name: review
+  agent: blueberry
+  outputSchema:
+    $ref: "config/review-schema.yaml#/ReviewResult"
+
+# 按 owner 路由修复
+- name: fix-review-issues
+  dependsOn: [review]
+  condition: 'review.verdict != "pass"'
+  dynamic:
+    generator: for_each
+    input: "$.review.issues"
+    template:
+      agentSelector:
+        role: "{{ item.owner }}"
+
+# 迭代循环
+- name: review-loop
+  loop:
+    body: [fix-review-issues, test, review]
+    condition: 'review.verdict != "pass"'
+    maxIterations: 5
+```
+
+**Review Gate 执行流程**：
+
+```text
+1. execute review stage → 产出 ReviewResult
+2. if verdict == "pass" → gate 通过，继续下游
+3. if verdict == "fail":
+   a. 按 issue.owner 路由每个 issue 给对应 Agent
+   b. 各 Agent 修复各自 issue（带 acceptance 验收条件）
+   c. 执行 retest stages 回测
+   d. 回到步骤 1（重新 review）
+4. 达到 maxIterations → 按 onMaxReached 策略（fail / continue）
+```
+
+**适用场景**：game-dev（UI/美术/玩法迭代）、coding-agent 协作、文档生成、自动重构、任何需要"产出 → 审查 → 返工"闭环的工作流。
 
 ### 并行执行与聚合
 
