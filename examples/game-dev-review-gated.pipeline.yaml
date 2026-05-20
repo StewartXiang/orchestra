@@ -1,0 +1,340 @@
+apiVersion: orchestra.io/v1
+kind: Pipeline
+metadata:
+  name: game-dev-review-gated
+  namespace: abyss-chess
+  version: 1.0.0
+  labels:
+    project: abyss-chess
+    env: prod
+    type: game-dev
+  annotations:
+    owner: "taoer@example.com"
+    docs: "https://wiki/pipelines/game-dev-review-gated"
+
+spec:
+  description: |
+    Game-dev 流水线 — Review-Driven 迭代版本。
+
+    完整流程：
+      design → parallel(code + art) → test → review
+      → review verdict = fail? → fix-review-issues → review-loop (re-test + re-review)
+      → review verdict = pass? → deploy-approval → deploy
+
+    核心机制（Review Gate）：
+      1. review Agent 通过 outputSchema 产出结构化 ReviewResult
+      2. ReviewResult.verdict 决定门禁：pass 放行，fail 进入修复循环
+      3. fix-review-issues 动态节点按 issue.owner 自动路由给对应 Agent
+         (developer → walnut, designer → cherry, artist → cherry, tester → almond)
+      4. review-loop 包裹 fix → test → review，最多 5 轮迭代
+      5. 循环条件 review.verdict != "pass" 持续驱动，直到通过或达到上限
+
+    不同于 game-dev.pipeline.yaml（fix-each 仅修 bug）：
+      - 覆盖 UI/视觉/玩法/性能/音频等非 bug 类问题
+      - Review 作为硬门禁而非文本建议
+      - 结构化输出保证下游可路由、可重试、可验收
+
+  agents:
+    # ── 开发 Agent ──
+    walnut:
+      role: developer
+      capabilities: [python, godot, gdscript, git]
+      mcpEndpoint: "mcp://localhost:18761"
+      tools: [godot_edit, file_read, file_write, git_commit, git_push, shell_run]
+      maxConcurrency: 2
+      resources:
+        requests: {memory: "2Gi", cpu: "500m"}
+        limits: {memory: "4Gi", cpu: "2000m", tokensPerMinute: 100000}
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+      retry:
+        maxAttempts: 3
+        backoff: exponential
+        initialInterval: 10s
+        maxInterval: 5m
+        coefficient: 2.0
+        nonRetryableErrors: [AuthError, ToolNotAllowed, InvalidInput, SchemaViolation]
+
+    # ── 美术/设计 Agent ──
+    cherry:
+      role: designer
+      capabilities: [ui-design, asset-export]
+      mcpEndpoint: "mcp://localhost:18765"
+      tools: [figma_export, image_process, file_write]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    # ── 测试 Agent ──
+    almond:
+      role: tester
+      capabilities: [python, pytest, playwright, ui-test]
+      mcpEndpoint: "mcp://localhost:18762"
+      tools: [pytest_run, playwright_run, screenshot_compare, shell_run]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    # ── Review Agent ──
+    blueberry:
+      role: chat
+      capabilities: [chat, summarize, analyze, game-design-review]
+      mcpEndpoint: "mcp://localhost:18768"
+      tools: [file_read, summarize, submit_result]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    # ── 部署 Agent ──
+    coconut:
+      role: ci_engineer
+      capabilities: [docker, deploy, k8s]
+      mcpEndpoint: "mcp://localhost:18764"
+      tools: [docker_run, kubectl_apply, deploy_action]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+  pipeline:
+    stages:
+      # ================================================================
+      # 阶段 1: 设计 — 将需求转化为开发任务 + UI 规格
+      # ================================================================
+      - name: design
+        agent: blueberry
+        input: "$.params.gdd"
+        prompt: |
+          你是游戏设计顾问。分析以下 Game Design Document，
+          拆解为具体开发任务和 UI 规格说明。
+
+          GDD:
+          {{ input }}
+
+          请以结构化格式输出，包含 task（开发任务描述）和 ui_spec（UI 规格说明）。
+        output: "$.design"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [task, ui_spec]
+          properties:
+            task: {type: string}
+            ui_spec: {type: string}
+
+      # ================================================================
+      # 阶段 2a: 开发 — 核心游戏逻辑
+      # ================================================================
+      - name: code
+        agent: walnut
+        dependsOn: [design]
+        input: "$.design.task"
+        output: "$.code"
+        timeouts: {startToClose: 30m, heartbeat: 30s}
+        sideEffects: [git, fs]
+        cache:
+          key: "{{ inputs.design.task | sha256 }}"
+          ttl: 24h
+          enabled: true
+        artifacts:
+          - name: game_build
+            path: "/opt/godot/projects/AbyssChess/build/"
+            type: directory
+            retention: 7d
+            compress: true
+            hash: sha256
+
+      # ================================================================
+      # 阶段 2b: 美术 — UI 资产生产（条件执行：有 UI 变更才跑）
+      # ================================================================
+      - name: art
+        agent: cherry
+        dependsOn: [design]
+        condition: "design.ui_spec != ''"
+        input: "$.design.ui_spec"
+        output: "$.art"
+        timeouts: {startToClose: 20m, heartbeat: 30s}
+        artifacts:
+          - name: ui_assets
+            path: "/opt/assets/ui/"
+            type: directory
+            retention: 30d
+
+      # ================================================================
+      # 阶段 3: 测试 — 运行测试套件
+      # ================================================================
+      - name: test
+        agent: almond
+        dependsOn: [code, art]
+        input:
+          code: "$.code"
+          art: "$.art"
+        output: "$.test"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [result, coverage]
+          properties:
+            result: {type: string, enum: [pass, fail]}
+            coverage: {type: number}
+            failures: {type: array}
+            screenshots: {type: array}
+
+      # ================================================================
+      # 阶段 4: Review Gate — 结构化评审（硬门禁）
+      #
+      # review Agent 必须通过 submit_result tool 返回 ReviewResult:
+      #   - verdict: "pass" → 门禁打开，继续部署
+      #   - verdict: "fail" → 门禁关闭，进入 fix-review-issues 修复
+      #
+      # 输出 Schema 强制结构化，保证下游（fix-review-issues / review-loop）
+      # 可稳定读取 verdict + issues 做路由决策。
+      # ================================================================
+      - name: review
+        agent: blueberry
+        dependsOn: [test]
+        input:
+          code: "$.code"
+          art: "$.art"
+          test: "$.test"
+          design: "$.design"
+        prompt: |
+          你是游戏项目的全面审查员。审查以下游戏开发产出并给出结构化 verdict。
+
+          审查维度：
+          1. gameplay   — 玩法逻辑是否正确、有趣
+          2. visual     — 美术风格是否统一、资产是否完整
+          3. ui         — UI 是否可读、交互是否流畅
+          4. technical  — 代码质量、性能
+          5. performance — 帧率、加载时间
+          6. audio      — 音效/音乐完整性
+          7. docs       — 文档是否更新
+
+          审查标准：
+          - 测试全部通过是 pass 的前提
+          - 每个 issue 必须标注 owner（developer/designer/tester/artist）
+            和 severity（P0/P1/P2/P3）
+          - P0 阻断项至少一个 → verdict = fail
+          - 每个 issue 需提供 acceptance（验收条件），用于回测定性判断
+
+          必须以 submit_result tool 返回结构化 ReviewResult。
+
+          输入：
+          {{ input }}
+        output: "$.review"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+        outputSchema:
+          $ref: "config/review-schema.yaml#/ReviewResult"
+
+      # ================================================================
+      # 阶段 5: 按 Owner 路由修复 Review Issues
+      #
+      # 只有当 review verdict = fail 时才执行。
+      # 通过 dynamic for_each 将每个 ReviewIssue 按 owner 字段
+      # 路由到对应 Agent：
+      #   developer → walnut
+      #   designer  → cherry
+      #   artist    → cherry
+      #   tester    → almond
+      #
+      # onItemFailure: continue 保证单个 issue 修复失败不阻塞其他。
+      # ================================================================
+      - name: fix-review-issues
+        dependsOn: [review]
+        condition: 'review.verdict != "pass"'
+        dynamic:
+          generator: for_each
+          input: "$.review.issues"
+          maxParallel: 3
+          maxItems: 50
+          onItemFailure: continue
+          aggregateOutput: "$.fixes"
+          template:
+            name: "fix-{{ item.id }}"
+            agentSelector:
+              role: "{{ item.owner }}"
+            input: "$.item"
+            prompt: |
+              你需要修复以下 review issue:
+
+              {{ input }}
+
+              修复后请确认满足 acceptance 条件。
+            output: "$.fix"
+            timeouts: {startToClose: 15m, heartbeat: 30s}
+
+      # ================================================================
+      # 阶段 6: Review 迭代循环
+      #
+      # loop 包裹 fix-review-issues → test → review 三轮：
+      #   1. fix-review-issues 修复本轮所有 issue
+      #   2. test 回测确认修复没有引入回归
+      #   3. review 重新评审
+      #
+      # 循环条件 review.verdict != "pass" 持续驱动：
+      #   - verdict = "pass" → 退出循环，进入部署
+      #   - verdict = "fail" → 继续下一轮（最多 5 轮）
+      #   - 达到 5 轮上限 → 按 onMaxReached: fail 终止流水线
+      #
+      # 这是 Review Gate 的核心：每轮修复后必须重新 test + review，
+      # 直到 review Agent 给出 pass verdict 或迭代耗尽。
+      # ================================================================
+      - name: review-loop
+        dependsOn: [review]
+        loop:
+          body: [fix-review-issues, test, review]
+          condition: 'review.verdict != "pass"'
+          maxIterations: 5
+          onMaxReached: fail
+
+      # ================================================================
+      # 阶段 7: 部署审批 — 人工确认
+      # ================================================================
+      - name: deploy-approval
+        dependsOn: [review-loop]
+        approval:
+          approvers: ["ou_xxx", "ou_yyy"]
+          policy: any
+          message: "Review 通过，测试全部通过。是否部署到生产环境？"
+          timeout: 1h
+          onTimeout: reject
+          escalateTo: "ou_manager"
+          reminderInterval: 15m
+          contextFields:
+            - "$.review.summary"
+            - "$.review.confidence"
+            - "$.test.coverage"
+
+      # ================================================================
+      # 阶段 8: 部署 — 推送到生产
+      # ================================================================
+      - name: deploy
+        agent: coconut
+        dependsOn: [deploy-approval]
+        input: "$.code"
+        output: "$.deploy"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+        sideEffects: [deploy, network]
+        onFailure: compensate
+        retry: {maxAttempts: 1}
+
+    # ── Saga 补偿：部署失败时自动回滚 ──
+    compensation:
+      strategy: reverse
+      maxCompensationAttempts: 2
+      onCompensationFailure: alert
+      actions:
+        - {forStage: deploy, agent: coconut, action: rollback, runOn: any_failure}
+
+  parameters:
+    - name: gdd
+      type: string
+      required: true
+      description: "Game Design Document 路径或链接"
+
+  global:
+    heartbeatInterval: 15s
+    maxConcurrency: 3
+    timeouts:
+      workflowExecution: 4h
+      activityDefault: 30m
+    notification:
+      channels: [feishu]
+      target: "ou_xxx"
+      onEvents: [failed, approval_pending, succeeded]
+    artifactsBasePath: "/opt/agent-orchestra/artifacts"
+    priority: high
+    retention:
+      historyDays: 30
+      artifactsDays: 7
+      successfulRunsKeep: 100
+      failedRunsKeep: 50
