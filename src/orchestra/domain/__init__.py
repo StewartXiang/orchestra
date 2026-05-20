@@ -73,11 +73,20 @@ from .pipeline import (
     PipelineSpec,
     PipelineStatus,
     Retention,
+    ReviewGate,
     SecretRef,
     Stage,
     StageStatus,
     StageTimeouts,
     TriggerInfo,
+)
+from .review import (
+    ReviewArea,
+    ReviewIssue,
+    ReviewOwner,
+    ReviewResult,
+    ReviewSeverity,
+    ReviewVerdict,
 )
 from .state import (
     ArtifactReference,
@@ -109,7 +118,10 @@ __all__ = [
     "ChildWorkflowRef", "Compensation", "CompensationAction", "GlobalSpec", "GlobalTimeouts",
     "SecretRef", "ParameterDef", "Notification", "Retention",
     "ArtifactSpec", "ArtifactRef", "CacheSpec", "Metadata", "PipelineRef", "TriggerInfo",
-    "PipelineStatus", "StageStatus",
+    "PipelineStatus", "StageStatus", "ReviewGate",
+    # review
+    "ReviewSeverity", "ReviewArea", "ReviewVerdict", "ReviewOwner",
+    "ReviewIssue", "ReviewResult",
     # state
     "WorkflowState", "StageOutput", "ArtifactReference", "Checkpoint", "ProgressInfo",
     "TaskInput", "TaskOutput",

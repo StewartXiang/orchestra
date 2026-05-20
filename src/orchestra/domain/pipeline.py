@@ -26,6 +26,7 @@ from .enums import (
     StagePhase,
     TriggerKind,
 )
+from .review import ReviewGate
 
 
 # ---------- Output 配置 ----------
@@ -131,12 +132,12 @@ class CacheSpec(BaseModel):
 # ---------- Stage ----------
 
 class Stage(BaseModel):
-    """流水线节点。``agent / agents / agentSelector / childWorkflow / approval / dynamic / loop`` 七选一。"""
+    """流水线节点。``agent / agents / agentSelector / childWorkflow / approval / dynamic / loop / reviewGate`` 八选一。"""
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     name: DnsName
 
-    # 执行体（七选一）
+    # 执行体（八选一）
     agent: str | None = None
     agents: list[str] | None = None
     agentSelector: AgentSelector | None = None
@@ -144,6 +145,7 @@ class Stage(BaseModel):
     approval: Approval | None = None
     dynamic: DynamicStage | None = None
     loop: LoopStage | None = None
+    reviewGate: ReviewGate | None = None
 
     # 调度
     dependsOn: list[str] = Field(default_factory=list)
