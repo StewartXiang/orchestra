@@ -1,0 +1,101 @@
+apiVersion: orchestra.io/v1
+kind: Pipeline
+metadata:
+  name: review-gate-simple
+  namespace: default
+  version: 1.0.0
+
+spec:
+  description: |
+    演示 reviewGate 第八种 Stage 执行体。
+
+    reviewGate 将 review → issue routing → fix → retest → re-review
+    打包为单一 Stage 一等概念，替代传统的 review + fix + loop 三阶段
+    组合模式（参见 review-driven.pipeline.yaml）。
+
+    reviewGate 执行逻辑：
+      1. 调用 review agent，获取结构化 ReviewResult
+      2. verdict == "pass" → 门禁通过，Stage 成功
+      3. verdict == "fail" → 按 routing 表路由 issue 给修复 Agent
+      4. 重跑 retest stages
+      5. 回到步骤 1
+      6. maxIterations 耗尽 → onMaxReached 策略
+
+  agents:
+    walnut:
+      role: developer
+      capabilities: [python, git]
+      mcpEndpoint: "mcp://localhost:18761"
+      tools: [file_read, file_write, git_commit]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    almond:
+      role: tester
+      capabilities: [python, pytest]
+      mcpEndpoint: "mcp://localhost:18762"
+      tools: [pytest_run, shell_run]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    blueberry:
+      role: chat
+      capabilities: [review, analyze]
+      mcpEndpoint: "mcp://localhost:18768"
+      tools: [file_read, summarize, submit_result]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+  pipeline:
+    stages:
+      # ── 开发 ──
+      - name: code
+        agent: walnut
+        input: "$.params.spec"
+        output: "$.code"
+        timeouts: {startToClose: 20m}
+
+      # ── 测试 ──
+      - name: test
+        agent: almond
+        dependsOn: [code]
+        input: "$.code"
+        output: "$.test"
+        timeouts: {startToClose: 10m}
+        outputSchema:
+          type: object
+          required: [result]
+          properties:
+            result: {type: string, enum: [pass, fail]}
+            coverage: {type: number}
+            failures: {type: array}
+
+      # ── Review Gate（一等门禁）──
+      - name: quality-gate
+        dependsOn: [test]
+        reviewGate:
+          agent: blueberry
+          input: "$."
+          prompt: |
+            审查代码和测试结果，给出结构化 verdict。
+
+            输入:
+            {{ input }}
+          outputSchema:
+            $ref: "config/review-schema.yaml#/ReviewResult"
+          maxIterations: 5
+          onMaxReached: fail
+          routing:
+            developer: walnut
+            designer: walnut
+            artist: walnut
+            tester: almond
+          retest: [test]
+
+  parameters:
+    - name: spec
+      type: string
+      required: true
+
+  global:
+    heartbeatInterval: 15s
+    maxConcurrency: 2
+    timeouts:
+      workflowExecution: 2h
