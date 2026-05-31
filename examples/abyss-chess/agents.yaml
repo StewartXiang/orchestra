@@ -1,0 +1,90 @@
+# ─────────────────────────────────────────────
+# AbyssChess（深渊棋局）Agent 配置
+#
+# 映射 indie-game-pipeline.md 7 人 → 实际 AbyssChess Agent
+# ─────────────────────────────────────────────
+apiVersion: orchestra.io/v1
+kind: AgentProfileSet
+
+profiles:
+  # ── 制作人/主策 (P) ──
+  blueberry:
+    role: chat
+    capabilities: [analyze, summarize, chat, design-doc, task-breakdown, gameplay, scoping, playtest, art-direction]
+    mcpEndpoint: "mcp://host.docker.internal:18768"
+    tools: [file_read, file_write, summarize, task_plan, design_spec, submit_approval, submit_result]
+    labels: {team: production, role: P}
+    description: "制作人/主策 — GDD 评审、方向决策、任务拆分、内容裁剪、最终签批"
+
+  # ── 主程序/技术美术 (DF+TA) ──
+  mango:
+    role: developer
+    capabilities: [godot, gdscript, shader, animation, particle, gameplay, design-doc]
+    mcpEndpoint: "mcp://host.docker.internal:18766"
+    tools: [godot_edit, file_read, file_write, git_commit, git_push, shell_run, shader_compile, design_spec]
+    maxConcurrency: 2
+    resources: {requests: {memory: "2Gi", cpu: "500m"}, limits: {memory: "4Gi", cpu: "2000m"}}
+    livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+    retry: {maxAttempts: 3, backoff: exponential, initialInterval: 10s, maxInterval: 5m}
+    labels: {team: engineering, role: DF}
+    description: "主程序/技术美术 — 渲染、Shader、UI实现、动画、引擎集成、玩法设计"
+
+  # ── 系统/战斗程序 (DB) ──
+  walnut:
+    role: developer
+    capabilities: [python, godot, gdscript, git, gameplay, ai, async, architecture]
+    mcpEndpoint: "mcp://host.docker.internal:18761"
+    tools: [godot_edit, file_read, file_write, git_commit, git_push, shell_run, pytest_run]
+    maxConcurrency: 2
+    resources: {requests: {memory: "2Gi", cpu: "500m"}, limits: {memory: "4Gi", cpu: "2000m", tokensPerMinute: 100000}}
+    startupProbe: {endpoint: "mcp://host.docker.internal:18761/health", initialDelay: 10s, periodSeconds: 5s, failureThreshold: 6}
+    readinessProbe: {endpoint: "mcp://host.docker.internal:18761/health", periodSeconds: 30s, timeout: 5s, failureThreshold: 3}
+    livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+    retry: {maxAttempts: 3, backoff: exponential, initialInterval: 10s, maxInterval: 5m}
+    labels: {team: engineering, role: DB}
+    description: "系统/战斗程序 — 游戏逻辑、AI、数值实现、数据层、架构设计"
+
+  # ── 美术/UI (A) ──
+  cherry:
+    role: designer
+    capabilities: [2d-art, concept-art, ui-design, asset-export, ai-gen, godot, figma]
+    mcpEndpoint: "mcp://host.docker.internal:18765"
+    tools: [godot_edit, file_read, file_write, image_process, figma_export]
+    labels: {team: art, role: A}
+    description: "美术/UI — 概念设计、2D资产、UI界面、AI辅助生成、Figma设计"
+
+  # ── 自动化测试 (QB) ──
+  almond:
+    role: tester
+    capabilities: [python, pytest, coverage, gameplay, balance-test, test-strategy]
+    mcpEndpoint: "mcp://host.docker.internal:18762"
+    tools: [pytest_run, shell_run, file_read, screenshot_compare]
+    labels: {team: qa, role: QB}
+    description: "自动化测试 — 单元测试、逻辑验证、数值平衡、代码覆盖、测试策略"
+
+  # ── E2E/UI测试 (QF) ──
+  strawberry:
+    role: tester
+    capabilities: [playwright, ui-test, screenshot, compatibility, e2e, manual-test]
+    mcpEndpoint: "mcp://host.docker.internal:18767"
+    tools: [playwright_run, screenshot_compare, shell_run, file_read]
+    labels: {team: qa, role: QF}
+    description: "E2E/UI测试 — Playwright自动化、截图比对、兼容性、视觉验证"
+
+  # ── 备用测试 ──
+  grape:
+    role: standby
+    capabilities: [playwright, ui-test, generic, regression]
+    mcpEndpoint: "mcp://host.docker.internal:18769"
+    tools: [playwright_run, screenshot_compare, file_read]
+    labels: {team: qa, role: standby}
+    description: "备用测试 — 双视角验证、回归测试、兜底任务"
+
+  # ── CI/部署 (O) ──
+  coconut:
+    role: ci_engineer
+    capabilities: [docker, deploy, git, ci, build, project-mgmt, store, monitoring]
+    mcpEndpoint: "mcp://host.docker.internal:18764"
+    tools: [docker_run, shell_run, deploy_action, git_tag, kubectl_apply]
+    labels: {team: ops, role: O}
+    description: "CI/部署/PM — 构建管线、进度管理、任务分配、里程碑、部署上线"

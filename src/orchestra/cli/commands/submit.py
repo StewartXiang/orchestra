@@ -106,4 +106,4 @@ async def _submit(ctx, pipeline, params: dict, priority: str, idempotency_key: s
     except Exception as e:
         error(f"提交失败: {e}")
     finally:
-        await client.service_client.close()
+        pass  # service_client has no async close in sdk>=1.7

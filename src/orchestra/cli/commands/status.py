@@ -52,7 +52,7 @@ async def _do_status(ctx, pipeline_id, watch, show_approvals, query_name):
         except Exception as e:
             error(f"查询失败: {e}")
         finally:
-            await client.service_client.close()
+            pass  # sdk>=1.7 has no async close
         return
 
     handle = client.get_workflow_handle(pipeline_id)
@@ -100,4 +100,4 @@ async def _do_status(ctx, pipeline_id, watch, show_approvals, query_name):
     else:
         await _show()
 
-    await client.service_client.close()
+    pass  # sdk>=1.7 has no async close

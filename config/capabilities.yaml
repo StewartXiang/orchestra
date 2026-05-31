@@ -50,6 +50,29 @@ capabilities:
 
   # 玩法
   gameplay:     "游戏玩法 / 战斗 / AI"
+  ai:           "游戏 AI / 行为树 / 寻路"
+  balance-test: "数值平衡 / 经济系统测试"
+  compatibility: "跨平台兼容性测试"
+  animation:    "2D 动画 / spritesheet / 骨骼"
+  particle:     "粒子特效 / VFX"
+
+  # 美术 / 资产
+  2d-art:       "2D 像素 / 矢量绘图"
+  ai-gen:       "AI 辅助生成 / Stable Diffusion"
+  concept-art:  "概念设计 / 风格探索"
+  asset-search: "免费素材检索 / 筛选"
+
+  # 项目管理
+  project-mgmt:  "进度管理 / 任务分配 / 里程碑"
+  design-doc:    "设计文档 / GDD 编写"
+  task-breakdown: "任务拆分 / 依赖分析"
+  scoping:       "内容裁剪 / 范围控制"
+  playtest:      "试玩组织 / 反馈收集"
+
+  # 运维 / 发布
+  build:        "构建 / 打包 / 编译"
+  store:        "商店页管理 / Steam 发布"
+  monitoring:   "线上监控 / 崩溃收集"
 
   # 通用
   chat:         "对话能力"

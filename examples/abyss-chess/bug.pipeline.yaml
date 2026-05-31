@@ -1,0 +1,271 @@
+# ─────────────────────────────────────────────
+# AbyssChess Bug 生命周期流水线
+#
+# 覆盖事件: BUG + BUILD_FAIL + PLATFORM_ISSUE
+# 格式参考 _BUGS.md 的 Bug 卡片
+# ─────────────────────────────────────────────
+apiVersion: orchestra.io/v1
+kind: Pipeline
+metadata:
+  name: abyss-chess-bug
+  namespace: abyss-chess
+  version: 1.0.0
+  labels: {project: abyss-chess, type: bug}
+  annotations: {owner: "almond@abyss-chess.dev"}
+
+spec:
+  description: |
+    AbyssChess Bug 生命周期。
+    参考 _BUGS.md 格式: BUG-XXX: 描述 [等级] → 负责人
+
+    等级: P0(Blocker/崩溃) P1(Critical/功能) P2(Major/数值) P3(Minor/视觉) P4(Trivial)
+    指派: walnut(逻辑/AI/数值) mango(渲染/UI/动画) cherry(资产)
+    验证: almond(后端) strawberry(前端)
+
+  agents:
+    blueberry: {role: chat, capabilities: [analyze, bug-triage], mcpEndpoint: "mcp://host.docker.internal:18768", tools: [file_read, file_write], livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}}
+    walnut: {role: developer, capabilities: [godot, gdscript, gameplay, ai, git], mcpEndpoint: "mcp://host.docker.internal:18761", tools: [godot_edit, file_read, file_write, git_commit, git_push, shell_run], maxConcurrency: 2, livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}}
+    mango: {role: developer, capabilities: [godot, gdscript, shader, animation, git], mcpEndpoint: "mcp://host.docker.internal:18766", tools: [godot_edit, file_read, file_write, git_commit, git_push, shell_run], livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}}
+    cherry: {role: designer, capabilities: [2d-art, ui-design, godot], mcpEndpoint: "mcp://host.docker.internal:18765", tools: [godot_edit, file_write, image_process], livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}}
+    almond: {role: tester, capabilities: [python, pytest, gameplay], mcpEndpoint: "mcp://host.docker.internal:18762", tools: [pytest_run, shell_run, file_read], livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}}
+    strawberry: {role: tester, capabilities: [playwright, ui-test, screenshot], mcpEndpoint: "mcp://host.docker.internal:18767", tools: [playwright_run, screenshot_compare, file_read], livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}}
+    coconut: {role: ci_engineer, capabilities: [ci, build], mcpEndpoint: "mcp://host.docker.internal:18764", tools: [shell_run], livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}}
+
+  pipeline:
+    stages:
+      # ══════════════════════════════════════════════
+      # BUG[1]: 提交
+      # ══════════════════════════════════════════════
+      - name: report
+        agent: blueberry
+        input: "$.params.bug_report"
+        prompt: |
+          接收 Bug 报告。格式化 Bug 卡片 (参考 _BUGS.md):
+
+          格式:
+          ```
+          ### BUG-XXX: 标题 [等级]
+          - 发现: 时间 (来源)
+          - 复现: 步骤
+          - 根因: (待排查)
+          - 修复: (待修复)
+          - 验证: (待验证)
+          - 相关文件: (待补充)
+          ```
+
+          输入: {{ input }}
+        output: "$.bug_card"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      # ══════════════════════════════════════════════
+      # BUG[2]: 分类+指派
+      # ══════════════════════════════════════════════
+      - name: triage
+        agent: blueberry
+        dependsOn: [report]
+        input: "$.bug_card"
+        prompt: |
+          分类并指派 Bug:
+
+          等级:
+          - P0(Blocker): 崩溃/数据损坏/阻塞发布 → 立即修
+          - P1(Critical): 核心功能异常 → 当前Sprint
+          - P2(Major): 非核心功能/数值 → 本里程碑
+          - P3(Minor): 视觉瑕疵/边缘case → 下里程碑
+          - P4(Trivial): 锦上添花 → Backlog
+
+          指派:
+          - 逻辑/AI/数值/架构 → walnut
+          - 渲染/UI/动画/Shader → mango
+          - 资产/贴图/界面 → cherry
+          - 设计/数值方向 → blueberry
+
+          输入: {{ input }}
+        output: "$.triage"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [severity, assignee, id]
+          properties:
+            id: {type: string}
+            severity: {type: string, enum: [P0, P1, P2, P3, P4]}
+            assignee: {type: string}
+            acceptance: {type: array}
+
+      # ══════════════════════════════════════════════
+      # BUG[3]: 修复（按 assignee 路由）
+      # ══════════════════════════════════════════════
+      - name: fix-walnut
+        agent: walnut
+        dependsOn: [triage]
+        condition: "triage.assignee == 'walnut'"
+        input: "$.triage"
+        prompt: |
+          修复 Bug (逻辑/AI/数值)。项目: /home/ccbot/AbyssChess
+          {{ input }}
+          修复后: godot --headless --check-only + 更新 _BUGS.md
+        output: "$.fix_walnut"
+        timeouts: {startToClose: 60m, heartbeat: 30s}
+        sideEffects: [git, fs]
+
+      - name: fix-mango
+        agent: mango
+        dependsOn: [triage]
+        condition: "triage.assignee == 'mango'"
+        input: "$.triage"
+        prompt: |
+          修复 Bug (渲染/UI/动画)。项目: /home/ccbot/AbyssChess
+          {{ input }}
+          修复后: godot --headless --check-only + 更新 _BUGS.md
+        output: "$.fix_mango"
+        timeouts: {startToClose: 60m, heartbeat: 30s}
+        sideEffects: [git, fs]
+
+      - name: fix-cherry
+        agent: cherry
+        dependsOn: [triage]
+        condition: "triage.assignee == 'cherry'"
+        input: "$.triage"
+        prompt: |
+          修复 Bug (资产/UI 资源)。项目: /home/ccbot/AbyssChess
+          {{ input }}
+          修复后: 更新 _BUGS.md
+        output: "$.fix_cherry"
+        timeouts: {startToClose: 30m, heartbeat: 30s}
+        sideEffects: [git, fs]
+
+      # ══════════════════════════════════════════════
+      # BUG[4]: 验证
+      # ══════════════════════════════════════════════
+      - name: verify-backend
+        agent: almond
+        dependsOn: [fix-walnut, fix-mango, fix-cherry]
+        condition: 'triage.severity != "P4"'
+        input:
+          fix_walnut: "$.fix_walnut"
+          fix_mango: "$.fix_mango"
+          fix_cherry: "$.fix_cherry"
+        prompt: |
+          验证后端 Bug 修复:
+
+          1. 复现原始 Bug 步骤
+          2. 运行关联单元测试
+          3. 确认无回归
+
+          输入: {{ input }}
+        output: "$.verify_backend"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+
+      - name: verify-frontend
+        agent: strawberry
+        dependsOn: [fix-walnut, fix-mango, fix-cherry]
+        condition: 'triage.severity != "P4"'
+        input:
+          fix_walnut: "$.fix_walnut"
+          fix_mango: "$.fix_mango"
+          fix_cherry: "$.fix_cherry"
+        prompt: |
+          验证前端 Bug 修复:
+
+          1. 打开 http://localhost:8765
+          2. 复现原始 Bug 步骤
+          3. 截图比对
+          4. 确认无视觉/交互异常
+        output: "$.verify_frontend"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+
+      # BUG[5]: Close
+      - name: close
+        agent: blueberry
+        dependsOn: [verify-backend, verify-frontend]
+        input:
+          bug: "$.triage"
+          verify_backend: "$.verify_backend"
+          verify_frontend: "$.verify_frontend"
+        prompt: |
+          确认 Bug 关闭:
+
+          1. 修复已验证 ✅
+          2. 更新 _BUGS.md: 状态 → ✅ 已修复
+          3. 记录修复人 + 时间
+        output: "$.closed"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      # ══════════════════════════════════════════════
+      # 事件9: BUILD_FAIL (独立触发)
+      # ══════════════════════════════════════════════
+      - name: build-fail-detect
+        agent: coconut
+        condition: "$.params.event == 'build_fail'"
+        input: "$.params.detail"
+        prompt: |
+          构建失败检测:
+
+          项目: /home/ccbot/AbyssChess
+          错误: {{ input }}
+
+          分析:
+          1. validate.sh 哪项 fail？
+          2. build.sh 哪步 fail？
+          3. 定位失败 commit
+        output: "$.build_fail"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      - name: build-fail-fix
+        agentSelector: {role: developer}
+        agents: [walnut, mango]
+        dependsOn: [build-fail-detect]
+        condition: "$.params.event == 'build_fail'"
+        input: "$.build_fail"
+        prompt: "修复构建失败。项目: /home/ccbot/AbyssChess {{ input }}"
+        output: "$.build_fix"
+        timeouts: {startToClose: 30m, heartbeat: 30s}
+
+      # ══════════════════════════════════════════════
+      # 事件11: PLATFORM_ISSUE (独立触发)
+      # ══════════════════════════════════════════════
+      - name: platform-report
+        agent: strawberry
+        condition: "$.params.event == 'platform_issue'"
+        input: "$.params.detail"
+        prompt: |
+          平台问题报告:
+
+          已知 AbyssChess 平台特性:
+          - Web (Godot WebGL): Canvas 输入不响应(BUG-045)
+          - headless --check-only 不检测 @onready 运行时错误
+          - Web 导出字体路径区分大小写
+
+          输入: {{ input }}
+        output: "$.platform"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      - name: platform-fix
+        agent: mango
+        dependsOn: [platform-report]
+        condition: "$.params.event == 'platform_issue'"
+        input: "$.platform"
+        prompt: "修复平台问题。注意 WebGL 兼容性。项目: /home/ccbot/AbyssChess"
+        output: "$.platform_fix"
+        timeouts: {startToClose: 30m, heartbeat: 30s}
+
+  parameters:
+    - name: bug_report
+      type: string
+      required: false
+      description: "Bug 报告内容"
+    - name: event
+      type: string
+      required: false
+      description: "独立事件: build_fail | platform_issue"
+    - name: detail
+      type: string
+      required: false
+      description: "事件详情"
+
+  global:
+    heartbeatInterval: 15s
+    maxConcurrency: 3
+    timeouts: {workflowExecution: 4h}
+    notification: {channels: [feishu], target: "blueberry", onEvents: [failed, succeeded]}
+    priority: high

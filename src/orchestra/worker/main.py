@@ -124,11 +124,10 @@ async def main() -> None:
 
     logger.info("worker_starting", profile=profile_name, task_queue=task_queue, temporal=temporal_host)
 
-    # ⚠️ 将所有 profile 的 MCP endpoint 从 mcp://host:187xx 映射为 http://host:189xx
-    # 必须在 startup probe 之前完成（probe 使用映射后的端点）
+    # MCP endpoint: mcp:// → http:// (agent servers run on same ports as profile)
     for pname, p in profiles.items():
-        p.mcpEndpoint = p.mcpEndpoint.replace("mcp://", "http://").replace(":187", ":189")
-    mcp_endpoint = mcp_endpoint.replace("mcp://", "http://").replace(":187", ":189")
+        p.mcpEndpoint = p.mcpEndpoint.replace("mcp://", "http://")
+    mcp_endpoint = mcp_endpoint.replace("mcp://", "http://")
     build_registry(profiles)
 
     # Startup probe（使用映射后的端点）

@@ -1,0 +1,694 @@
+# ─────────────────────────────────────────────
+# 独立游戏 Sprint 全流程主流水线
+#
+# 覆盖事件: SPRINT_START → FEATURE → BUG → BUILD → MILESTONE
+#           → CONTENT_FREEZE → CODE_FREEZE → RELEASE
+# 以及嵌入: BUILD_FAIL / PLATFORM_ISSUE / DESIGN_CHANGE / DESC_SCOPE
+#
+# 对应 indie-game-pipeline.md 的全部 16 个事件
+# ─────────────────────────────────────────────
+apiVersion: orchestra.io/v1
+kind: Pipeline
+metadata:
+  name: indie-sprint-master
+  namespace: indie-game
+  version: 1.0.0
+  labels: {project: indie-game, env: dev, team: full-team}
+  annotations:
+    owner: "mochi@indie-game.dev"
+    docs: "https://wiki/pipelines/indie-sprint"
+
+spec:
+  description: |
+    独立游戏 Sprint 全流程 — 7人团队。
+
+    ┌──────── 制作 ──────────────────────────┐
+    │ 🍡 mochi   — 制作人/主策 (P)           │  方向决策、需求、验收
+    ├──────── 程序 ──────────────────────────┤
+    │ 🌰 hazel   — 后端程序 (DB)             │  逻辑、AI、数值
+    │ 🍁 maple   — 前端程序 (DF)             │  渲染、UI、动画
+    ├──────── 美术 ──────────────────────────┤
+    │ 🌸 sakura  — 美术 (A)                  │  2D/UI/概念
+    ├──────── 测试 ──────────────────────────┤
+    │ 🪨 slate   — 后端测试 (QB)             │  逻辑、数值
+    │ 🍋 lime    — 前端测试 (QF)             │  视觉、兼容
+    ├──────── 运维 ──────────────────────────┤
+    │ 🌲 cedar   — 运维/PM (O)               │  CI/CD、进度、构建
+    └────────────────────────────────────────┘
+
+    Sprint 节奏: 1-2 周一循环
+    Sprint第一天触发 SPRINT_START → 持续 FEATURE/BUG/ASSET → Sprint末 MILESTONE
+
+  # ── Agent 定义 ──
+  agents:
+    mochi:
+      role: chat
+      capabilities: [analyze, summarize, chat, design-doc, task-breakdown, gameplay, scoping, playtest]
+      mcpEndpoint: "mcp://host.docker.internal:18770"
+      tools: [file_read, file_write, summarize, task_plan, design_spec, submit_approval]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    hazel:
+      role: developer
+      capabilities: [godot, gdscript, python, git, gameplay, ai, async]
+      mcpEndpoint: "mcp://host.docker.internal:18771"
+      tools: [godot_edit, file_read, file_write, git_commit, git_push, shell_run, pytest_run]
+      maxConcurrency: 2
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+      retry: {maxAttempts: 3, backoff: exponential, initialInterval: 10s, maxInterval: 5m}
+
+    maple:
+      role: developer
+      capabilities: [godot, gdscript, shader, animation, particle, git, ui-design]
+      mcpEndpoint: "mcp://host.docker.internal:18772"
+      tools: [godot_edit, file_read, file_write, git_commit, git_push, shell_run, shader_compile, image_process]
+      maxConcurrency: 2
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    sakura:
+      role: designer
+      capabilities: [2d-art, concept-art, ui-design, asset-export, ai-gen, asset-search, godot]
+      mcpEndpoint: "mcp://host.docker.internal:18773"
+      tools: [file_read, file_write, image_process, asset_download]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    slate:
+      role: tester
+      capabilities: [python, pytest, coverage, gameplay, balance-test]
+      mcpEndpoint: "mcp://host.docker.internal:18774"
+      tools: [pytest_run, shell_run, file_read]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    lime:
+      role: tester
+      capabilities: [playwright, ui-test, screenshot, compatibility, e2e]
+      mcpEndpoint: "mcp://host.docker.internal:18775"
+      tools: [playwright_run, screenshot_compare, shell_run, file_read]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    cedar:
+      role: ci_engineer
+      capabilities: [docker, deploy, git, ci, build, project-mgmt, store, monitoring]
+      mcpEndpoint: "mcp://host.docker.internal:18776"
+      tools: [docker_run, shell_run, deploy_action, git_tag, store_publish]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+  pipeline:
+    stages:
+      # ══════════════════════════════════════════════
+      # 事件 15: SPRINT_START
+      # Trigger: 新 Sprint 周期开始（日历/手动）
+      # ══════════════════════════════════════════════
+      - name: sprint-start
+        agent: cedar
+        input: "$.params.sprint_goal"
+        prompt: |
+          你是 Sprint 项目经理。
+
+          根据 Sprint 目标和 backlog，制定本 Sprint 计划。
+
+          Sprint 目标: {{ input }}
+
+          输出:
+          1. Sprint 任务列表（优先级+负责人+预估工时+依赖）
+          2. 对比上 Sprint 完成率调整容量
+          3. 确认阻塞项
+        output: "$.sprint_plan"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [tasks, goal, capacity]
+          properties:
+            goal: {type: string}
+            tasks: {type: array}
+            capacity: {type: integer}
+
+      # ══════════════════════════════════════════════
+      # 事件 1: FEATURE — 设计评审（P+DB+DF）
+      # Trigger: P 完成功能规格 → FEATURE Pipeline[1-2]
+      # ══════════════════════════════════════════════
+      - name: feature-design-review
+        agent: mochi
+        dependsOn: [sprint-start]
+        input:
+          feature_spec: "$.params.feature_spec"
+          sprint_plan: "$.sprint_plan"
+        prompt: |
+          你是制作人/主策。做设计评审：
+
+          1. 审阅功能规格：玩法是否清晰？验收标准是否明确？
+          2. 确认后端(hazel)可实现、前端(maple)可实现
+          3. 输出结构化的 Feature Spec（含任务拆分建议）
+
+          输入: {{ input }}
+        output: "$.design"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [task_backend, task_frontend, assets_needed, acceptance_criteria]
+          properties:
+            task_backend: {type: string}
+            task_frontend: {type: string}
+            assets_needed: {type: array}
+            acceptance_criteria: {type: array}
+
+      # ── FEATURE Pipeline[3]: 任务拆分（O）──
+      - name: task-split
+        agent: cedar
+        dependsOn: [feature-design-review]
+        input: "$.design"
+        prompt: |
+          你是项目经理。拆分任务并分配：
+
+          1. 后端任务 → hazel (≤3d/个)
+          2. 前端任务 → maple (≤3d/个)
+          3. 资产任务 → sakura (如有)
+          4. 标注依赖关系
+
+          输入: {{ input }}
+        output: "$.tasks"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      # ── FEATURE Pipeline[4]: 后端实现 ──
+      - name: implement-backend
+        agent: hazel
+        dependsOn: [task-split]
+        condition: "design.task_backend != ''"
+        input: "$.design.task_backend"
+        output: "$.backend"
+        timeouts: {startToClose: 60m, heartbeat: 30s}
+        sideEffects: [git, fs]
+        cache: {key: "{{ inputs | sha256 }}", ttl: 24h, enabled: true}
+
+      # ── FEATURE Pipeline[5]: 前端实现 ──
+      - name: implement-frontend
+        agent: maple
+        dependsOn: [task-split]
+        condition: "design.task_frontend != ''"
+        input: "$.design.task_frontend"
+        output: "$.frontend"
+        timeouts: {startToClose: 60m, heartbeat: 30s}
+        sideEffects: [git, fs]
+
+      # ── FEATURE Pipeline[6]: Code Review（互审）──
+      - name: code-review
+        agent: mochi
+        dependsOn: [implement-backend, implement-frontend]
+        input:
+          backend: "$.backend"
+          frontend: "$.frontend"
+        prompt: |
+          你是制作人，审查代码提交。检查:
+          1. 后端逻辑是否匹配设计规格
+          2. 前端表现是否匹配设计规格
+          3. 代码质量和可维护性
+
+          输入: {{ input }}
+
+          输出 verdict: pass/fail + 问题列表
+        output: "$.review"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [verdict]
+          properties:
+            verdict: {type: string, enum: [pass, fail]}
+            issues: {type: array}
+
+      # ── FEATURE Pipeline[8-9]: 后端测试 ──
+      - name: qa-backend
+        agent: slate
+        dependsOn: [code-review]
+        condition: 'review.verdict == "pass"'
+        input: "$.backend"
+        output: "$.qa_backend"
+        timeouts: {startToClose: 30m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [result]
+          properties:
+            result: {type: string, enum: [pass, fail]}
+            bugs: {type: array}
+            balance_notes: {type: string}
+
+      # ── FEATURE Pipeline[8-9]: 前端测试 ──
+      - name: qa-frontend
+        agent: lime
+        dependsOn: [code-review]
+        condition: 'review.verdict == "pass"'
+        input: "$.frontend"
+        output: "$.qa_frontend"
+        timeouts: {startToClose: 30m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [result]
+          properties:
+            result: {type: string, enum: [pass, fail]}
+            visual_issues: {type: array}
+            framerate: {type: number}
+
+      # ── FEATURE Pipeline[10]: P 最终验收 ──
+      - name: acceptance
+        agent: mochi
+        dependsOn: [qa-backend, qa-frontend]
+        input:
+          design: "$.design"
+          qa_backend: "$.qa_backend"
+          qa_frontend: "$.qa_frontend"
+        prompt: |
+          你是制作人。做最终验收:
+
+          1. 对照 acceptance_criteria 逐条检查
+          2. 后端测试: {{ input.qa_backend.result }}
+          3. 前端测试: {{ input.qa_frontend.result }}
+          4. 确认好玩、流畅
+
+          输出: pass / fail + 反馈
+        output: "$.acceptance"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [verdict]
+          properties:
+            verdict: {type: string, enum: [pass, fail]}
+            feedback: {type: string}
+
+      # ══════════════════════════════════════════════
+      # 事件 2: BUG — 缺陷修复循环
+      # Trigger: QA 发现 Bug / 验收不通过
+      # ══════════════════════════════════════════════
+      - name: bug-triage
+        agent: mochi
+        dependsOn: [qa-backend, qa-frontend]
+        condition: 'qa_backend.result == "fail" or qa_frontend.result == "fail"'
+        input:
+          backend_bugs: "$.qa_backend"
+          frontend_bugs: "$.qa_frontend"
+        prompt: |
+          你是制作人，做 Bug 分类:
+
+          1. 合并前端+后端 Bug 列表
+          2. 定级: Blocker(P0) / Critical(P1) / Major(P2) / Minor(P3) / Trivial(P4)
+          3. 指派: 逻辑/AI/数值 → hazel, 渲染/UI/动画 → maple, 资产 → sakura
+
+          输入: {{ input }}
+        output: "$.bugs"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      # ── BUG Pipeline[3]: 并行修 Bug ──
+      - name: fix-bugs
+        dependsOn: [bug-triage]
+        condition: 'size(bugs) > 0'
+        dynamic:
+          generator: for_each
+          input: "$.bugs"
+          maxParallel: 3
+          maxItems: 50
+          onItemFailure: continue
+          aggregateOutput: "$.fixes"
+          template:
+            name: "fix-{{ item.id }}"
+            agentSelector:
+              role: "{{ item.assignee == 'hazel' ? 'developer' : item.assignee == 'maple' ? 'developer' : 'designer' }}"
+            input: "$.item"
+            prompt: |
+              修复以下 Bug:
+
+              {{ input }}
+
+              修复后确认 acceptance 条件满足。
+            output: "$.fix"
+            timeouts: {startToClose: 30m, heartbeat: 30s}
+
+      # ── BUG Pipeline[4]: 验证修复 ──
+      - name: verify-bugs
+        agent: mochi
+        dependsOn: [fix-bugs]
+        input: "$.fixes"
+        prompt: |
+          验证所有 Bug 修复。逐条对比原始 Bug 的 acceptance 条件。
+
+          输入: {{ input }}
+        output: "$.verification"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      # ══════════════════════════════════════════════
+      # 事件 5: BUILD — 构建部署
+      # ══════════════════════════════════════════════
+      - name: ci-build
+        agent: cedar
+        dependsOn: [acceptance, verify-bugs]
+        condition: 'acceptance.verdict == "pass"'
+        input:
+          backend: "$.backend"
+          frontend: "$.frontend"
+        prompt: |
+          执行 CI 构建:
+
+          1. 运行 validate.sh 检查
+          2. 运行 build.sh 编译
+          3. 部署到测试环境
+
+          输入: {{ input }}
+        output: "$.build"
+        timeouts: {startToClose: 20m, heartbeat: 30s}
+        sideEffects: [deploy, network]
+        outputSchema:
+          type: object
+          required: [status]
+          properties:
+            status: {type: string, enum: [success, failed]}
+            build_url: {type: string}
+            error_log: {type: string}
+
+      # 事件 9: BUILD_FAIL（嵌入 — CI 失败自动处置）
+      - name: build-fail-triage
+        agent: cedar
+        dependsOn: [ci-build]
+        condition: 'build.status == "failed"'
+        input: "$.build.error_log"
+        prompt: |
+          构建失败！分析错误日志，判断根因:
+
+          1. 编译错误 → 找到出错文件和提交者
+          2. 脚本问题 → 修复 CI 配置
+          3. 环境问题 → 检查依赖
+
+          输出根因和修复建议
+        output: "$.build_fail"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      - name: build-fail-fix
+        agentSelector: {role: developer}
+        agents: [hazel, maple]
+        dependsOn: [build-fail-triage]
+        condition: 'build.status == "failed"'
+        input: "$.build_fail"
+        output: "$.build_fix"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+
+      # 重新构建
+      - name: rebuild
+        agent: cedar
+        dependsOn: [build-fail-fix]
+        condition: 'build.status == "failed"'
+        input: "$.build_fix"
+        prompt: "重新执行 CI 构建。{{ input }}"
+        output: "$.build_retry"
+        timeouts: {startToClose: 20m, heartbeat: 30s}
+        sideEffects: [deploy, network]
+
+      # ── BUILD Pipeline[4]: Smoke Test ──
+      - name: smoke-backend
+        agent: slate
+        dependsOn: [ci-build, rebuild]
+        input: "$.build.build_url"
+        output: "$.smoke_backend"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+
+      - name: smoke-frontend
+        agent: lime
+        dependsOn: [ci-build, rebuild]
+        input: "$.build.build_url"
+        output: "$.smoke_frontend"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [result, framerate]
+          properties:
+            result: {type: string, enum: [pass, fail]}
+            framerate: {type: number}
+
+      # 事件 11: PLATFORM_ISSUE（嵌入 — 前端测试发现平台异常）
+      - name: platform-check
+        agent: lime
+        dependsOn: [smoke-frontend]
+        condition: 'smoke_frontend.result != "pass"'
+        input: "$.smoke_frontend"
+        output: "$.platform_issues"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      - name: platform-fix
+        agent: maple
+        dependsOn: [platform-check]
+        condition: 'size(platform_issues) > 0'
+        input: "$.platform_issues"
+        output: "$.platform_fix"
+        timeouts: {startToClose: 30m, heartbeat: 30s}
+
+      # ══════════════════════════════════════════════
+      # 事件 6: MILESTONE — 里程碑评审
+      # Trigger: Sprint 结束 / 里程碑日期到达
+      # ══════════════════════════════════════════════
+      - name: milestone-review
+        agent: mochi
+        dependsOn: [smoke-backend, smoke-frontend, platform-fix]
+        input:
+          sprint_plan: "$.sprint_plan"
+          acceptance: "$.acceptance"
+          smoke_backend: "$.smoke_backend"
+          smoke_frontend: "$.smoke_frontend"
+        prompt: |
+          你是制作人。做里程碑评审:
+
+          1. 汇总所有 Feature/Bug/Asset 的完成状态
+          2. 对照里程碑目标评估
+
+          输出:
+          - GREEN:  全部达标 → 进入下一阶段
+          - YELLOW: 有风险 → 列出 crasher list
+          - RED:    严重滞后 → 需要内容裁剪
+        output: "$.milestone"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [status]
+          properties:
+            status: {type: string, enum: [GREEN, YELLOW, RED]}
+            crasher_list: {type: array}
+            recommendation: {type: string}
+
+      # 事件 7: DESC_SCOPE（嵌入 — 里程碑 RED 时触发）
+      - name: descope
+        agent: mochi
+        dependsOn: [milestone-review]
+        condition: 'milestone.status == "RED"'
+        input: "$.sprint_plan"
+        prompt: |
+          里程碑 RED！内容裁剪:
+
+          1. 列出所有未完成内容
+          2. 标记: CUT / KEEP / SIMPLIFY
+          3. 规则: 先砍影响面小的、保核心玩法
+
+          输入: {{ input }}
+        output: "$.descope"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+
+      - name: descope-notify
+        agent: cedar
+        dependsOn: [descope]
+        input: "$.descope"
+        prompt: |
+          内容裁剪通知全队:
+
+          1. 哪些任务取消 → hazel/maple/sakura 停手
+          2. 哪些简化 → 更新 Spec
+          3. 更新任务板
+
+          输入: {{ input }}
+        output: "$.notify"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      # ══════════════════════════════════════════════
+      # 事件 13: CONTENT_FREEZE — 内容冻结
+      # Trigger: 发布前 1-2 周
+      # ══════════════════════════════════════════════
+      - name: content-freeze
+        agent: mochi
+        dependsOn: [milestone-review, descope-notify]
+        condition: 'milestone.status == "GREEN"'
+        input: "$.milestone"
+        prompt: |
+          宣布内容冻结。
+
+          冻结: 新资产、新功能、新关卡、数值调整
+          允许: P0/P1 Bug 修复、文字修正
+
+          盘点所有资产状态。
+        output: "$.content_freeze"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [frozen]
+          properties:
+            frozen: {type: boolean}
+            assets_locked: {type: array}
+            assets_cut: {type: array}
+
+      # ══════════════════════════════════════════════
+      # 事件 14: CODE_FREEZE — 代码冻结
+      # Trigger: 发布前 3-5 天
+      # ══════════════════════════════════════════════
+      - name: code-freeze
+        agent: cedar
+        dependsOn: [content-freeze]
+        condition: "content_freeze.frozen == true"
+        input: "$.build"
+        prompt: |
+          代码冻结:
+
+          1. 切出 release 分支
+          2. main 只接受 P0 修复
+          3. 设置分支保护 + 强制审批
+          4. 生成 Release Candidate
+
+          输入: {{ input }}
+        output: "$.code_freeze"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+        sideEffects: [git, fs]
+
+      # 终测（QB:后端 + QF:前端 并行）
+      - name: final-qb
+        agent: slate
+        dependsOn: [code-freeze]
+        input: "$.code_freeze"
+        output: "$.final_backend"
+        timeouts: {startToClose: 30m, heartbeat: 30s}
+
+      - name: final-qf
+        agent: lime
+        dependsOn: [code-freeze]
+        input: "$.code_freeze"
+        output: "$.final_frontend"
+        timeouts: {startToClose: 30m, heartbeat: 30s}
+
+      # P 签批
+      - name: sign-off
+        dependsOn: [final-qb, final-qf]
+        approval:
+          approvers: ["mochi"]
+          policy: any
+          message: "终测通过。发布上线？"
+          timeout: 4h
+          onTimeout: reject
+          contextFields: ["$.final_backend.result", "$.final_frontend.result"]
+
+      # ══════════════════════════════════════════════
+      # 事件 16: RELEASE — 发布上线
+      # Trigger: P 签批通过 + 发布日期到达
+      # ══════════════════════════════════════════════
+      - name: release-preflight
+        agent: cedar
+        dependsOn: [sign-off]
+        input:
+          build: "$.build"
+          final_backend: "$.final_backend"
+          final_frontend: "$.final_frontend"
+        prompt: |
+          上线前检查清单:
+
+          1. RC 包已通过终测
+          2. P 已签批
+          3. 所有平台 Build 通过
+          4. 版本号正确
+          5. Store 页面已就绪
+          6. 回滚方案已就绪
+        output: "$.preflight"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      - name: deploy-release
+        agent: cedar
+        dependsOn: [release-preflight]
+        input: "$.build"
+        output: "$.release"
+        timeouts: {startToClose: 30m, heartbeat: 30s}
+        sideEffects: [deploy, network]
+        onFailure: compensate
+
+      - name: live-qb
+        agent: slate
+        dependsOn: [deploy-release]
+        output: "$.live_backend"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+
+      - name: live-qf
+        agent: lime
+        dependsOn: [deploy-release]
+        output: "$.live_frontend"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+
+      - name: release-announce
+        agent: mochi
+        dependsOn: [live-qb, live-qf]
+        input:
+          live_backend: "$.live_backend"
+          live_frontend: "$.live_frontend"
+        prompt: "发布公告。版本号、更新内容、已知问题。{{ input }}"
+        output: "$.announcement"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+
+      - name: post-release-monitor
+        agent: cedar
+        dependsOn: [release-announce]
+        input: "$.release"
+        prompt: |
+          上线后持续监控 24h:
+
+          1. 崩溃率
+          2. 玩家反馈
+          3. 有 Hotfix 需求 → 走 Blocker BUG 快速通道
+        output: "$.monitor"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      - name: retro
+        agent: mochi
+        dependsOn: [post-release-monitor]
+        input:
+          release: "$.release"
+          monitor: "$.monitor"
+        prompt: |
+          发布复盘（上线后 3 天内）:
+
+          1. 这次发布顺利吗？
+          2. 哪里卡了？
+          3. 下次怎么改进？
+          4. 更新流水线 SLA / 检查清单
+        output: "$.retro"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+
+    # ── Saga 补偿：部署失败回滚 ──
+    compensation:
+      strategy: reverse
+      maxCompensationAttempts: 2
+      onCompensationFailure: alert
+      actions:
+        - {forStage: deploy-release, agent: cedar, action: rollback, runOn: any_failure}
+
+  parameters:
+    - name: sprint_goal
+      type: string
+      required: true
+      description: "Sprint 目标（1句话）"
+    - name: feature_spec
+      type: string
+      required: true
+      description: "功能设计规格（Feature Spec 路径或内容）"
+
+  secrets:
+    - {name: llm-api-key, fromEnv: LLM_API_KEY}
+    - {name: deploy-token, fromFile: "/etc/orchestra/secrets/deploy-token"}
+
+  global:
+    heartbeatInterval: 15s
+    maxConcurrency: 4
+    timeouts:
+      workflowExecution: 8h
+      activityDefault: 30m
+    notification:
+      channels: [feishu]
+      target: "mochi"
+      onEvents: [failed, approval_pending, succeeded]
+    artifactsBasePath: "/opt/agent-orchestra/artifacts"
+    priority: high
+    retention: {historyDays: 30, artifactsDays: 7}

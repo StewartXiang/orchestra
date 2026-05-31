@@ -108,14 +108,20 @@ spec:
           art: "$.art"
           test: "$.test"
         prompt: |
-          你是游戏项目的代码审查员。审查以下内容并给出 verdict。
+          你是 {{ role }}，负责审查 {{ stage }} 阶段的产出。
+
+          可用工具: {{ tools }}
 
           审查标准：
-          1. 代码逻辑是否正确
-          2. UI 资产是否符合设计规范
-          3. 测试是否全部通过
+          1. 代码逻辑正确，符合 GDScript 规范（@onready、enum 不用 string、static typing）
+          2. UI 资产尺寸、命名、格式符合设计规范
+          3. 测试全部通过，覆盖率 ≥ 80%
 
-          必须以 submit_result tool 返回结构化结果。
+          步骤：
+          1. 阅读输入的 code、art、test 内容
+          2. 逐条对照审查标准给出 verdict
+          3. 如有问题，对每个 issue 标注 severity（P0-P3）和 owner（developer/designer/tester）
+          4. 调用 submit_result tool 提交结果
 
           输入：
           {{ input }}

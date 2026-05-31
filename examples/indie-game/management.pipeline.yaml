@@ -1,0 +1,278 @@
+# ─────────────────────────────────────────────
+# 独立游戏 — 管理决策流水线
+# 覆盖事件:
+#   4: DESIGN_CHANGE (设计变更)
+#   7: DESC_SCOPE (内容裁剪)
+#  10: DEPENDENCY_BLOCK (依赖阻塞)
+#  12: PLAYTEST_FEEDBACK (试玩反馈)
+# ─────────────────────────────────────────────
+apiVersion: orchestra.io/v1
+kind: Pipeline
+metadata:
+  name: indie-management
+  namespace: indie-game
+  version: 1.0.0
+  labels: {project: indie-game, type: management}
+  annotations: {owner: "mochi@indie-game.dev"}
+
+spec:
+  description: |
+    管理类决策流水线。覆盖:
+    - 事件 4:  DESIGN_CHANGE    — P提案→DB+DF评估→P决策→O通知
+    - 事件 7:  DESC_SCOPE        — P+O审计→P决策→O通知
+    - 事件 10: DEPENDENCY_BLOCK  — O检测→P决策(等/替/调)→O监控
+    - 事件 12: PLAYTEST_FEEDBACK — P收集→分类→O派发
+
+  agents:
+    mochi: {role: chat, capabilities: [analyze, summarize, design-doc, task-breakdown, scoping, playtest], mcpEndpoint: "mcp://host.docker.internal:18770", tools: [file_read, file_write, summarize, task_plan, submit_approval], livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}}
+    hazel: {role: developer, capabilities: [godot, gdscript, gameplay, ai], mcpEndpoint: "mcp://host.docker.internal:18771", tools: [file_read, file_write], livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}}
+    maple: {role: developer, capabilities: [godot, gdscript, shader, animation, ui-design], mcpEndpoint: "mcp://host.docker.internal:18772", tools: [file_read, file_write], livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}}
+    cedar: {role: ci_engineer, capabilities: [project-mgmt, task-breakdown, deploy], mcpEndpoint: "mcp://host.docker.internal:18776", tools: [file_read, file_write, task_plan, shell_run], livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}}
+
+  pipeline:
+    stages:
+      # ══════════════════════════════════════════════
+      # 事件 4: DESIGN_CHANGE
+      # Trigger: P 决定改方向 / 原型验证不好玩
+      # ══════════════════════════════════════════════
+      - name: change-proposal
+        agent: mochi
+        condition: "$.params.event == 'design_change'"
+        input: "$.params.detail"
+        prompt: |
+          发起设计变更提案:
+
+          1. 改什么？
+          2. 为什么改？
+          3. 预期收益是什么？
+        output: "$.change_proposal"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      - name: impact-backend
+        agent: hazel
+        dependsOn: [change-proposal]
+        condition: "$.params.event == 'design_change'"
+        input: "$.change_proposal"
+        prompt: |
+          评估后端影响:
+
+          1. 哪些逻辑/数值/数据受影响？
+          2. 已有代码是否需要废弃？
+          3. 预估工时
+
+          输入: {{ input }}
+        output: "$.impact_backend"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+
+      - name: impact-frontend
+        agent: maple
+        dependsOn: [change-proposal]
+        condition: "$.params.event == 'design_change'"
+        input: "$.change_proposal"
+        prompt: |
+          评估前端影响:
+
+          1. 哪些UI/渲染/资产受影响？
+          2. 已有代码是否需要废弃？
+          3. 预估工时
+
+          输入: {{ input }}
+        output: "$.impact_frontend"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+
+      - name: change-decision
+        agent: mochi
+        dependsOn: [impact-backend, impact-frontend]
+        condition: "$.params.event == 'design_change'"
+        input:
+          proposal: "$.change_proposal"
+          backend_cost: "$.impact_backend"
+          frontend_cost: "$.impact_frontend"
+        prompt: |
+          决策: 执行变更 or 放弃？
+
+          综合评估成本与收益。输出: Go / NoGo
+        output: "$.change_decision"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      - name: change-notify
+        agent: cedar
+        dependsOn: [change-decision]
+        condition: "$.params.event == 'design_change' and change_decision.verdict == 'Go'"
+        input: "$.change_decision"
+        prompt: |
+          更新任务板:
+          1. 废弃被影响的旧任务
+          2. 创建新任务
+          3. 通知全队哪些工作作废
+        output: "$.change_done"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      # ══════════════════════════════════════════════
+      # 事件 7: DESC_SCOPE
+      # Trigger: 里程碑评审 RED / P 判断做不完
+      # ══════════════════════════════════════════════
+      - name: scope-audit
+        agent: mochi
+        condition: "$.params.event == 'descope'"
+        input: "$.params.detail"
+        prompt: |
+          内容审计:
+
+          1. 列出所有未完成内容
+          2. 标注每项: 优先级、依赖关系、剩余工时
+          3. 哪些可以砍、哪些必须保？
+
+          输入: {{ input }}
+        output: "$.scope_audit"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+
+      - name: cut-decision
+        agent: mochi
+        dependsOn: [scope-audit]
+        condition: "$.params.event == 'descope'"
+        input: "$.scope_audit"
+        prompt: |
+          裁剪决策:
+          1. 先砍影响面小的
+          2. 先砍无下游依赖的
+          3. 保核心玩法
+
+          标记每项: CUT / KEEP / SIMPLIFY
+        output: "$.cut_decision"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      - name: scope-notify
+        agent: cedar
+        dependsOn: [cut-decision]
+        condition: "$.params.event == 'descope'"
+        input: "$.cut_decision"
+        prompt: |
+          通知全队:
+          1. 哪些任务取消 → 对应人员停手
+          2. 哪些简化 → 更新 Spec
+          3. 更新任务板
+        output: "$.scope_done"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      # ══════════════════════════════════════════════
+      # 事件 10: DEPENDENCY_BLOCK
+      # Trigger: O 检测到上游阻塞
+      # ══════════════════════════════════════════════
+      - name: block-detect
+        agent: cedar
+        condition: "$.params.event == 'dependency_block'"
+        input: "$.params.detail"
+        prompt: |
+          检测到依赖阻塞。分析:
+
+          1. 哪个任务被阻塞？阻塞原因是哪个上游？
+          2. 下游影响链: 直接阻塞N个 → 间接阻塞M个 → 总延迟D天
+          3. 被阻塞的人员
+        output: "$.block_report"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      - name: block-decision
+        agent: mochi
+        dependsOn: [block-detect]
+        condition: "$.params.event == 'dependency_block'"
+        input: "$.block_report"
+        prompt: |
+          处置阻塞:
+
+          三个选项:
+          - WAIT:       等上游完成，接受延迟
+          - PLACEHOLDER: 下游先用临时数据/资产顶上
+          - RESHUFFLE:   下游人员先做其他独立任务
+
+          输出: 选择的方案 + 具体执行计划
+        output: "$.block_decision"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      - name: block-execute
+        agent: cedar
+        dependsOn: [block-decision]
+        condition: "$.params.event == 'dependency_block'"
+        input: "$.block_decision"
+        prompt: |
+          执行阻塞处置方案:
+          1. WAIT → 标记阻塞，监控上游进度
+          2. PLACEHOLDER → 创建临时任务
+          3. RESHUFFLE → 重新分配任务，通知受影响人
+
+          每日检查阻塞是否解除。>3天未解 → 升级到 P
+        output: "$.block_done"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+
+      # ══════════════════════════════════════════════
+      # 事件 12: PLAYTEST_FEEDBACK
+      # Trigger: 外部试玩反馈 / P 组织内部试玩
+      # ══════════════════════════════════════════════
+      - name: feedback-collect
+        agent: mochi
+        condition: "$.params.event == 'playtest'"
+        input: "$.params.detail"
+        prompt: |
+          试玩反馈收集与分类:
+
+          将每条反馈归类:
+          - BUG:       明确缺陷 → 创建 BUG
+          - UX_PAIN:   操作别扭 → FEATURE(改进)
+          - DESIGN:    好玩/不好玩 → DESIGN_CHANGE
+          - POLISH:    视觉/手感打磨 → FEATURE(低优先级)
+          - WISH:      想要新功能 → Backlog
+          - NOISE:     无价值 → 丢弃
+
+          输入: {{ input }}
+        output: "$.feedback_triage"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+
+      - name: feedback-prioritize
+        agent: mochi
+        dependsOn: [feedback-collect]
+        condition: "$.params.event == 'playtest'"
+        input: "$.feedback_triage"
+        prompt: |
+          优先级排序:
+          1. 高频反馈 > 单人反馈
+          2. 核心玩法相关 > 边缘功能
+          3. 阻塞体验 > 锦上添花
+
+          输出排序后的行动清单。
+        output: "$.feedback_priority"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      - name: feedback-dispatch
+        agent: cedar
+        dependsOn: [feedback-prioritize]
+        condition: "$.params.event == 'playtest'"
+        input: "$.feedback_priority"
+        prompt: |
+          派发反馈:
+
+          每条反馈进入对应流水线:
+          - BUG → 创建 BUG 卡片
+          - UX_PAIN → 创建 FEATURE(改进)
+          - DESIGN → 触发 DESIGN_CHANGE
+          - POLISH → 加入 Backlog
+
+          更新任务板 + 记录来源备查。
+        output: "$.feedback_done"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+  parameters:
+    - name: event
+      type: string
+      required: true
+      description: "事件类型: design_change | descope | dependency_block | playtest"
+    - name: detail
+      type: string
+      required: true
+      description: "事件详情（JSON 或文本）"
+
+  global:
+    heartbeatInterval: 15s
+    maxConcurrency: 2
+    timeouts: {workflowExecution: 2h}
+    notification: {channels: [feishu], target: "mochi", onEvents: [failed]}
+    priority: normal

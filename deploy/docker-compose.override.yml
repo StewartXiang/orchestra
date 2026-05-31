@@ -1,0 +1,11 @@
+# Override: disable temporal-ui (image unavailable from China mirrors)
+services:
+  temporal-ui:
+    profiles: ["with-ui"]
+
+  prometheus:
+    ports: ["9091:9090"]
+  grafana:
+    environment:
+      GF_SERVER_ROOT_URL: "https://47.114.116.51/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"

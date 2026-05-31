@@ -1,0 +1,173 @@
+# ─────────────────────────────────────────────
+# 独立游戏 — 资产管理流水线
+# 覆盖事件: ASSET (资产需求) + ASSET_REVISION (资产返工)
+# 对应 indie-game-pipeline.md 事件 3 和 8
+# ─────────────────────────────────────────────
+apiVersion: orchestra.io/v1
+kind: Pipeline
+metadata:
+  name: indie-asset
+  namespace: indie-game
+  version: 1.0.0
+  labels: {project: indie-game, type: asset}
+  annotations: {owner: "sakura@indie-game.dev"}
+
+spec:
+  description: |
+    独立游戏资产管理流水线。覆盖:
+    - 事件 3: ASSET — 新资产需求 (P→A→P→DF→QF→Done)
+    - 事件 8: ASSET_REVISION — 资产返工 (P驳回→A修改→DF重导→QF重测)
+
+    资产来源策略: 免费素材 > AI生成+微调 > 定制绘制
+
+  agents:
+    mochi: {role: chat, capabilities: [analyze, design-doc, art-direction], mcpEndpoint: "mcp://host.docker.internal:18770", tools: [file_read, submit_approval], livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}}
+    sakura: {role: designer, capabilities: [2d-art, concept-art, ui-design, asset-export, ai-gen, asset-search], mcpEndpoint: "mcp://host.docker.internal:18773", tools: [file_read, file_write, image_process, asset_download], livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}}
+    maple: {role: developer, capabilities: [godot, gdscript, shader, animation], mcpEndpoint: "mcp://host.docker.internal:18772", tools: [godot_edit, file_read, file_write, image_process], livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}}
+    lime: {role: tester, capabilities: [playwright, ui-test, screenshot], mcpEndpoint: "mcp://host.docker.internal:18775", tools: [playwright_run, screenshot_compare], livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}}
+
+  pipeline:
+    stages:
+      # ══════════════════════════════════════════════
+      # ASSET Pipeline[1-2]: 需求 + 来源决策
+      # ══════════════════════════════════════════════
+      - name: asset-request
+        agent: mochi
+        input: "$.params.asset_need"
+        prompt: |
+          你是制作人。评估资产需求并决定来源策略:
+
+          1. 免费素材库够用？ → SKIP（DF直接下载）
+          2. AI生成+微调？    → sakura 用AI出图+修改
+          3. 必须定制？      → sakura 从零画
+
+          输出: 来源决策 + 规格说明（尺寸、风格、用途）
+        output: "$.asset_spec"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [source]
+          properties:
+            source: {type: string, enum: [free, ai_gen, custom]}
+            specs: {type: string}
+            style_ref: {type: string}
+
+      # ── ASSET Pipeline[3]: 创建 ──
+      - name: create-asset
+        agent: sakura
+        dependsOn: [asset-request]
+        condition: "asset_spec.source != ''"
+        input: "$.asset_spec"
+        prompt: |
+          {{ input.source == 'free' ? '从免费素材库查找并下载符合规格的资产' : '根据规格创建游戏资产' }}
+
+          规格: {{ input.specs }}
+          风格参考: {{ input.style_ref }}
+        output: "$.asset"
+        timeouts: {startToClose: 30m, heartbeat: 30s}
+        artifacts:
+          - {name: assets, path: "/opt/assets/", type: directory, retention: 30d}
+
+      # ── ASSET Pipeline[4]: 评审 ──
+      - name: asset-review
+        agent: mochi
+        dependsOn: [create-asset]
+        input:
+          spec: "$.asset_spec"
+          asset: "$.asset"
+        prompt: |
+          评审资产:
+          1. 风格是否统一？
+          2. 规格是否正确？
+          3. 效果是否OK？
+
+          输出: pass / fail + 修改建议
+        output: "$.review"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      # ══════════════════════════════════════════════
+      # 事件 8: ASSET_REVISION — 返工循环
+      # Trigger: P 审核不通过
+      # ══════════════════════════════════════════════
+      - name: revision-loop
+        dependsOn: [asset-review]
+        loop:
+          body: [revise, re-review]
+          condition: 'review_result.verdict != "pass"'
+          maxIterations: 3
+          onMaxReached: fail
+
+      - name: revise
+        agent: sakura
+        input: "$.review"
+        prompt: |
+          根据修改意见调整资产:
+
+          修改意见: {{ input.feedback }}
+
+          完成后标注修改部分。
+        output: "$.revision"
+        timeouts: {startToClose: 30m, heartbeat: 30s}
+
+      - name: re-review
+        agent: mochi
+        input:
+          spec: "$.asset_spec"
+          revision: "$.revision"
+        prompt: |
+          重新评审修改后的资产。对照原始修改意见逐条检查。
+
+          原始意见: {{ input.spec }}
+          修改后: {{ input.revision }}
+
+          输出: pass / fail
+        output: "$.review_result"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      # ── ASSET Pipeline[5]: 导入引擎 ──
+      - name: import-engine
+        agent: maple
+        dependsOn: [revision-loop]
+        condition: 'review_result.verdict == "pass"'
+        input: "$.asset"
+        prompt: "将资产导入游戏引擎，配置材质/动画/碰撞，关联代码引用。"
+        output: "$.imported"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+        sideEffects: [git, fs]
+
+      # ── ASSET Pipeline[6]: QF 视觉验收 ──
+      - name: visual-test
+        agent: lime
+        dependsOn: [import-engine]
+        input: "$.imported"
+        output: "$.visual_qa"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [result]
+          properties:
+            result: {type: string, enum: [pass, fail]}
+            issues: {type: array}
+
+      # ── ASSET Pipeline[7]: Close ──
+      - name: done
+        agent: mochi
+        dependsOn: [visual-test]
+        condition: 'visual_qa.result == "pass"'
+        input: "$.visual_qa"
+        prompt: "资产验收通过。标记完成。"
+        output: "$.done"
+        timeouts: {startToClose: 1m, heartbeat: 30s}
+
+  parameters:
+    - name: asset_need
+      type: string
+      required: true
+      description: "资产需求描述 — 什么资产、用途、风格、规格"
+
+  global:
+    heartbeatInterval: 15s
+    maxConcurrency: 2
+    timeouts: {workflowExecution: 4h}
+    notification: {channels: [feishu], target: "mochi", onEvents: [failed, succeeded]}
+    priority: normal

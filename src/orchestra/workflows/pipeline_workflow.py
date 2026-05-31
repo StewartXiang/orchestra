@@ -898,22 +898,35 @@ class PipelineWorkflow:
             timeout = _parse_duration(stage.timeouts.startToClose)
 
         def _make_task(agent_name: str, suffix: str = "") -> AgentTaskInput:
-            # 模板展开 stage.prompt（支持 {{ input }}, {{ stage }}, {{ params.* }}）
+            # 从 Agent spec 获取 role 和 tools（用于 prompt 模板和 TaskInput）
+            agent_spec = inp.pipeline_dict.get("spec", {}).get("agents", {}).get(agent_name, {})
+            agent_role = agent_spec.get("role", "developer")
+            agent_tools = agent_spec.get("tools", [])
+
+            # 模板展开 stage.prompt（支持 {{ input }}, {{ stage }}, {{ params.* }},
+            #   {{ tools }}, {{ role }}, {{ agent }}）
             prompt_expanded: str | None = None
             if stage.prompt:
                 with workflow.unsafe.imports_passed_through():
                     from ..schema.template import render
                 prompt_expanded = render(
                     stage.prompt,
-                    {"input": stage_input, "stage": stage.name, "params": inp.params},
+                    {
+                        "input": stage_input,
+                        "stage": stage.name,
+                        "params": inp.params,
+                        "tools": ", ".join(agent_tools),
+                        "role": agent_role,
+                        "agent": agent_name,
+                    },
                 )
 
             task = TaskInput(
                 workflow_id=wf_id,
                 stage_name=stage.name,
                 agent_name=agent_name,
-                role="developer",
-                tools=[],
+                role=agent_role,
+                tools=agent_tools,
                 input=stage_input,
                 idempotency_key=f"{wf_id}/{stage.name}{suffix}",
                 traceparent=carrier.get("traceparent"),

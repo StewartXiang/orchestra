@@ -89,6 +89,24 @@ spec:
         agent: walnut
         dependsOn: [design-review]
         input: "$.gdd.task"
+        prompt: |
+          你是 {{ role }}（{{ agent }}），Godot 游戏开发者。
+
+          项目: FlappyBird（Godot 4.x）
+          可用工具: {{ tools }}
+
+          任务: {{ input }}
+
+          开发规范:
+          - GDScript 2.0: @onready 用 get_node_or_null, enum 不用 string 比较
+          - 每个函数 ≤ 30 行, 文件 ≤ 400 行
+          - 新增功能必须有对应测试
+
+          步骤:
+          1. 阅读相关源文件理解当前结构
+          2. 实现代码修改
+          3. godot --headless --check-only 验证语法
+          4. 调用 submit_result tool 提交 patch
         output: "$.code.patch"
         timeouts: {startToClose: 30m, heartbeat: 30s}
         cache: {enabled: true, ttl: 24h}

@@ -1,0 +1,711 @@
+# ─────────────────────────────────────────────
+# AbyssChess Sprint 全流程主流水线
+#
+# 覆盖事件: SPRINT_START → FEATURE → BUG → BUILD → MILESTONE
+#           → CONTENT_FREEZE → CODE_FREEZE → RELEASE
+#
+# 项目: AbyssChess（深渊棋局）Godot 4.x 战术肉鸽
+# 路径: /home/ccbot/AbyssChess
+# ─────────────────────────────────────────────
+apiVersion: orchestra.io/v1
+kind: Pipeline
+metadata:
+  name: abyss-chess-sprint
+  namespace: abyss-chess
+  version: 2.0.0
+  labels:
+    project: abyss-chess
+    env: prod
+    type: game-dev
+    team: 8-agent
+  annotations:
+    owner: "blueberry@abyss-chess.dev"
+    docs: "https://wiki/abyss-chess/pipelines/sprint"
+
+spec:
+  description: |
+    AbyssChess 深渊棋局 Sprint 主流水线 — 8 Agent 团队。
+
+    项目: Godot 4.x 战术肉鸽游戏
+    路径: /home/ccbot/AbyssChess
+    技术栈: GDScript, Godot 4, Playwright, Python
+
+    ┌──────── 制作 ──────────────────────────┐
+    │ 🫐 blueberry — 制作人/主策 (P)         │ GDD、设计评审、验收
+    ├──────── 程序 ──────────────────────────┤
+    │ 🥭 mango    — 主程序/TA (DF)          │ 渲染、Shader、UI、动画
+    │ 🥜 walnut   — 系统/战斗 (DB)          │ 逻辑、AI、数值、架构
+    ├──────── 美术 ──────────────────────────┤
+    │ 🍒 cherry   — 美术/UI (A)             │ 概念、2D、界面
+    ├──────── 测试 ──────────────────────────┤
+    │ 🧪 almond   — 自动化测试 (QB)         │ 单元测试、逻辑验证
+    │ 🍓 strawberry — E2E/UI测试 (QF)       │ Playwright、视觉
+    │ 🍇 grape    — 备用测试                │ 双视角验证
+    ├──────── 运维 ──────────────────────────┤
+    │ 🥥 coconut  — CI/部署 (O)             │ 构建、发布、进度
+    └────────────────────────────────────────┘
+
+    QA 流程（参考现有体系）:
+    - validate.sh: GDScript语法 / scene引用 / autoload循环 / 安全扫描
+    - build.sh web: Godot WebGL导出
+    - test_map_basics.gd: 33项地图基础测试
+    - test_class_load.gd: 17项类加载测试
+    - test_enemy_spawn.gd: 敌人生成测试
+    - pytest + Playwright: E2E浏览器测试
+    - screenshots/: 截图比对基线
+
+  agents:
+    blueberry:
+      role: chat
+      capabilities: [analyze, summarize, chat, design-doc, task-breakdown, gameplay, scoping, playtest]
+      mcpEndpoint: "mcp://host.docker.internal:18768"
+      tools: [file_read, file_write, summarize, task_plan, design_spec, submit_approval, submit_result]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    mango:
+      role: developer
+      capabilities: [godot, gdscript, shader, animation, particle, gameplay]
+      mcpEndpoint: "mcp://host.docker.internal:18766"
+      tools: [godot_edit, file_read, file_write, git_commit, git_push, shell_run, shader_compile]
+      maxConcurrency: 2
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    walnut:
+      role: developer
+      capabilities: [python, godot, gdscript, git, gameplay, ai, architecture]
+      mcpEndpoint: "mcp://host.docker.internal:18761"
+      tools: [godot_edit, file_read, file_write, git_commit, git_push, shell_run, pytest_run]
+      maxConcurrency: 2
+      startupProbe: {endpoint: "mcp://host.docker.internal:18761/health", initialDelay: 10s, periodSeconds: 5s, failureThreshold: 6}
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+      retry: {maxAttempts: 3, backoff: exponential, initialInterval: 10s, maxInterval: 5m}
+
+    cherry:
+      role: designer
+      capabilities: [2d-art, concept-art, ui-design, asset-export, ai-gen, godot]
+      mcpEndpoint: "mcp://host.docker.internal:18765"
+      tools: [godot_edit, file_read, file_write, image_process, figma_export]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    almond:
+      role: tester
+      capabilities: [python, pytest, coverage, gameplay, balance-test]
+      mcpEndpoint: "mcp://host.docker.internal:18762"
+      tools: [pytest_run, shell_run, file_read]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    strawberry:
+      role: tester
+      capabilities: [playwright, ui-test, screenshot, compatibility, e2e]
+      mcpEndpoint: "mcp://host.docker.internal:18767"
+      tools: [playwright_run, screenshot_compare, shell_run, file_read]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    grape:
+      role: standby
+      capabilities: [playwright, ui-test, generic, regression]
+      mcpEndpoint: "mcp://host.docker.internal:18769"
+      tools: [playwright_run, screenshot_compare, file_read]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+    coconut:
+      role: ci_engineer
+      capabilities: [docker, deploy, git, ci, build, project-mgmt]
+      mcpEndpoint: "mcp://host.docker.internal:18764"
+      tools: [docker_run, shell_run, deploy_action, git_tag]
+      livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}
+
+  pipeline:
+    stages:
+      # ══════════════════════════════════════════════
+      # SPRINT_START: 新 Sprint 启动
+      # ══════════════════════════════════════════════
+      - name: sprint-plan
+        agent: coconut
+        input:
+          sprint_goal: "$.params.sprint_goal"
+          backlog: "$.params.backlog"
+        prompt: |
+          根据 Sprint 目标制定计划。项目: /home/ccbot/AbyssChess
+
+          Sprint 目标: {{ input.sprint_goal }}
+          Backlog: {{ input.backlog }}
+
+          输出: 任务列表(优先级+负责人+预估工时+依赖)
+        output: "$.plan"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+
+      - name: sprint-kickoff
+        agent: blueberry
+        dependsOn: [sprint-plan]
+        input: "$.plan"
+        prompt: |
+          Sprint 启动。评审计划并确认:
+
+          1. 任务优先级是否合理？
+          2. 依赖关系是否正确？
+          3. 每人容量是否匹配？
+
+          计划: {{ input }}
+        output: "$.kickoff"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      # ══════════════════════════════════════════════
+      # DESIGN_REVIEW: 设计评审 (P + DB + DF)
+      # ══════════════════════════════════════════════
+      - name: design-review
+        agent: blueberry
+        dependsOn: [sprint-kickoff]
+        input:
+          feature: "$.params.feature_spec"
+          gdd: "res://GDD.md"
+          design: "res://DESIGN.md"
+        prompt: |
+          评审功能设计。参考 GDD.md 和 DESIGN.md:
+
+          1. 玩法设计是否符合 GDD？
+          2. 后端(walnut): 逻辑/AI/数值是否可实现？
+          3. 前端(mango): 渲染/UI/动画是否可实现？
+          4. 输出验收标准和任务拆分建议
+
+          功能: {{ input.feature }}
+        output: "$.design"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [task_backend, task_frontend, assets_needed, acceptance]
+          properties:
+            task_backend: {type: string}
+            task_frontend: {type: string}
+            assets_needed: {type: array}
+            acceptance: {type: array}
+
+      # ══════════════════════════════════════════════
+      # IMPLEMENT: 并行开发
+      # ══════════════════════════════════════════════
+      - name: dev-backend
+        agent: walnut
+        dependsOn: [design-review]
+        condition: "design.task_backend != ''"
+        input: "$.design.task_backend"
+        prompt: |
+          实现后端功能。项目: /home/ccbot/AbyssChess
+
+          需求: {{ input }}
+
+          规范: GDScript, @onready→get_node_or_null, node.type 用枚举, Autoload 不加 class_name
+          完成后自测: godot --headless --check-only
+        output: "$.backend"
+        timeouts: {startToClose: 120m, heartbeat: 30s}
+        sideEffects: [git, fs]
+        cache: {key: "{{ inputs | sha256 }}", ttl: 24h, enabled: true}
+
+      - name: dev-frontend
+        agent: mango
+        dependsOn: [design-review]
+        condition: "design.task_frontend != ''"
+        input: "$.design.task_frontend"
+        prompt: |
+          实现前端功能。项目: /home/ccbot/AbyssChess
+
+          需求: {{ input }}
+
+          规范: 动态 _draw() 显式传字体, spritesheet 引用正确, WebGL 兼容
+        output: "$.frontend"
+        timeouts: {startToClose: 120m, heartbeat: 30s}
+        sideEffects: [git, fs]
+
+      - name: dev-asset
+        agent: cherry
+        dependsOn: [design-review]
+        condition: 'size(design.assets_needed) > 0'
+        input: "$.design.assets_needed"
+        prompt: |
+          创建/更新资产。项目路径: /home/ccbot/AbyssChess/assets/
+
+          需求: {{ input }}
+          风格: 深渊暗紫哥特风, 参考 assets/textures/ 已有资产
+        output: "$.assets"
+        timeouts: {startToClose: 60m, heartbeat: 30s}
+        artifacts:
+          - {name: game_assets, path: "/home/ccbot/AbyssChess/assets/", type: directory, retention: 30d}
+
+      # ══════════════════════════════════════════════
+      # CODE_REVIEW: P 审查代码提交
+      # ══════════════════════════════════════════════
+      - name: code-review
+        agent: blueberry
+        dependsOn: [dev-backend, dev-frontend, dev-asset]
+        input:
+          backend: "$.backend"
+          frontend: "$.frontend"
+        prompt: |
+          审查代码变更。参考 ALIGNMENT.md 的审查维度:
+
+          1. 逻辑正确性 (vs GDD/DESIGN)
+          2. GDScript 规范 (class_name/autoload/onready)
+          3. 无 WebGL 已知陷阱
+          4. 资产引用完整性
+
+          verdict: pass 则进入测试，fail 则列出 issue
+        output: "$.review"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+        outputSchema:
+          $ref: "config/review-schema.yaml#/ReviewResult"
+
+      # ── Fix Review Issues ──
+      - name: fix-review-issues
+        dependsOn: [code-review]
+        condition: 'review.verdict != "pass"'
+        dynamic:
+          generator: for_each
+          input: "$.review.issues"
+          maxParallel: 3
+          maxItems: 50
+          onItemFailure: continue
+          aggregateOutput: "$.fixes"
+          template:
+            name: "fix-{{ item.id }}"
+            agentSelector:
+              role: "{{ item.owner }}"
+            input: "$.item"
+            prompt: "修复 Review Issue: {{ input }}  项目: /home/ccbot/AbyssChess"
+            output: "$.fix"
+            timeouts: {startToClose: 30m, heartbeat: 30s}
+
+      # ── Review 迭代循环 ──
+      - name: review-loop
+        dependsOn: [fix-review-issues]
+        condition: 'review.verdict != "pass"'
+        loop:
+          body: [fix-review-issues, code-review]
+          condition: 'review.verdict != "pass"'
+          maxIterations: 3
+          onMaxReached: fail
+
+      # ══════════════════════════════════════════════
+      # VALIDATE: Godot 语法检查 + 单元测试
+      # ══════════════════════════════════════════════
+      - name: validate
+        agent: coconut
+        dependsOn: [code-review, review-loop]
+        condition: 'review.verdict == "pass"'
+        input:
+          project: "/home/ccbot/AbyssChess"
+        prompt: |
+          运行质量检查:
+          1. bash /opt/godot/scripts/validate.sh /home/ccbot/AbyssChess
+          2. 确认 7 项全部 PASS
+          3. 如有 FAIL → 输出错误详情
+
+          项目: {{ input.project }}
+        output: "$.validate"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [result]
+          properties:
+            result: {type: string, enum: [pass, fail]}
+            checks: {type: array}
+            errors: {type: array}
+
+      - name: unit-tests
+        agent: almond
+        dependsOn: [validate]
+        condition: 'validate.result == "pass"'
+        input:
+          project: "/home/ccbot/AbyssChess"
+          tests:
+            - "tests/test_map_basics.gd"
+            - "tests/test_class_load.gd"
+            - "tests/test_enemy_spawn.gd"
+        prompt: |
+          运行 Godot 单元测试:
+          1. godot --headless --script tests/test_map_basics.gd (33项)
+          2. godot --headless --script tests/test_class_load.gd (17项)
+          3. godot --headless --script tests/test_enemy_spawn.gd
+
+          报告: pass/fail + 失败项详情
+        output: "$.unit"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [result, coverage]
+          properties:
+            result: {type: string, enum: [pass, fail]}
+            coverage: {type: number}
+            failures: {type: array}
+
+      # ══════════════════════════════════════════════
+      # BUILD: CI 构建
+      # ══════════════════════════════════════════════
+      - name: build
+        agent: coconut
+        dependsOn: [unit-tests]
+        condition: 'unit.result == "pass"'
+        input:
+          project: "/home/ccbot/AbyssChess"
+          target: "web"
+        prompt: |
+          构建 Web 版本:
+          bash /opt/godot/scripts/build.sh /home/ccbot/AbyssChess web
+
+          报告: 构建结果 + 产物路径
+        output: "$.build"
+        timeouts: {startToClose: 20m, heartbeat: 30s}
+        sideEffects: [fs]
+
+      - name: build-fail-triage
+        agent: coconut
+        dependsOn: [build]
+        condition: 'build.result == "fail"'
+        input: "$.build"
+        prompt: "构建失败！分析错误并定位根因。{{ input }}"
+        output: "$.build_fail"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      - name: build-fail-fix
+        agentSelector: {role: developer}
+        agents: [walnut, mango]
+        dependsOn: [build-fail-triage]
+        condition: 'build.result == "fail"'
+        input: "$.build_fail"
+        output: "$.build_fix"
+        timeouts: {startToClose: 30m, heartbeat: 30s}
+
+      - name: rebuild
+        agent: coconut
+        dependsOn: [build-fail-fix]
+        condition: 'build.result == "fail"'
+        input: "$.build"
+        prompt: "重新构建。bash /opt/godot/scripts/build.sh /home/ccbot/AbyssChess web"
+        output: "$.rebuild"
+        timeouts: {startToClose: 20m, heartbeat: 30s}
+
+      # ══════════════════════════════════════════════
+      # E2E: Playwright 浏览器测试 (QF + 备用)
+      # ══════════════════════════════════════════════
+      - name: e2e-test
+        agents: [strawberry, grape]
+        dependsOn: [build, rebuild]
+        input:
+          project: "/home/ccbot/AbyssChess"
+          test_dir: "tests/playwright"
+          screenshots: "tests/screenshots"
+        prompt: |
+          运行 Playwright E2E 测试:
+          1. 启动 Web 服务 (godot --headless --web-server)
+          2. 运行 tests/playwright/ 测试套件
+          3. 截图对比 tests/screenshots/ 基线
+          4. 报告: pass/fail + 截图差异
+
+          项目: {{ input.project }}
+        output: "$.e2e"
+        aggregateStrategy: vote
+        timeouts: {startToClose: 30m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [result]
+          properties:
+            result: {type: string, enum: [pass, fail]}
+            screenshots: {type: array}
+
+      # ══════════════════════════════════════════════
+      # 事件12: PLAYTEST_FEEDBACK (嵌入)
+      # ══════════════════════════════════════════════
+      - name: playtest-review
+        agent: blueberry
+        dependsOn: [e2e-test]
+        input: "$.e2e"
+        prompt: |
+          审阅 E2E 结果 + 试玩反馈:
+          1. 截图是否正常？
+          2. 操作流程是否顺畅？
+          3. 分类反馈: BUG / UX_PAIN / DESIGN / POLISH
+
+          输入: {{ input }}
+        output: "$.playtest"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+
+      # ══════════════════════════════════════════════
+      # BUG_TRIAGE: 缺陷分流
+      # ══════════════════════════════════════════════
+      - name: bug-triage
+        agent: blueberry
+        dependsOn: [playtest-review, unit-tests]
+        condition: 'unit.result == "fail" or e2e.result == "fail" or size(playtest.bugs) > 0'
+        input:
+          unit: "$.unit"
+          e2e: "$.e2e"
+          playtest: "$.playtest"
+        prompt: |
+          Bug 分类，参考 _BUGS.md 的格式:
+
+          等级: P0(Blocker/崩溃) / P1(Critical/功能) / P2(Major/数值) / P3(Minor/视觉)
+          指派: walnut(逻辑/AI) / mango(渲染/UI) / cherry(资产)
+
+          格式: "BUG-XXX: 描述 [等级] → 负责人"
+        output: "$.bugs"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      - name: fix-bugs
+        dependsOn: [bug-triage]
+        condition: 'size(bugs) > 0'
+        dynamic:
+          generator: for_each
+          input: "$.bugs"
+          maxParallel: 3
+          maxItems: 50
+          onItemFailure: continue
+          aggregateOutput: "$.bug_fixes"
+          template:
+            name: "fix-bug-{{ item.id }}"
+            agentSelector:
+              role: "{{ item.owner }}"
+            input: "$.item"
+            prompt: "修复 Bug: {{ input }}  项目: /home/ccbot/AbyssChess  更新 _BUGS.md 状态"
+            output: "$.fix"
+            timeouts: {startToClose: 30m, heartbeat: 30s}
+
+      # ══════════════════════════════════════════════
+      # ACCEPTANCE: P 最终验收
+      # ══════════════════════════════════════════════
+      - name: acceptance
+        agent: blueberry
+        dependsOn: [playtest-review, fix-bugs]
+        condition: 'review.verdict == "pass"'
+        input:
+          design: "$.design"
+          validate: "$.validate"
+          unit: "$.unit"
+          build: "$.build"
+          e2e: "$.e2e"
+        prompt: |
+          最终验收。对照 acceptance 标准:
+
+          1. validate.sh → {{ input.validate.result }}
+          2. 单元测试  → {{ input.unit.result }} (覆盖率 {{ input.unit.coverage }})
+          3. 构建      → {{ input.build.result }}
+          4. E2E测试   → {{ input.e2e.result }}
+
+          输出: pass/fail + 反馈 + 是否进入内容冻结
+        output: "$.acceptance"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+
+      # ══════════════════════════════════════════════
+      # MILESTONE: 里程碑评审
+      # ══════════════════════════════════════════════
+      - name: milestone
+        agent: blueberry
+        dependsOn: [acceptance]
+        input:
+          plan: "$.plan"
+          acceptance: "$.acceptance"
+        prompt: |
+          里程碑评审。综合评估:
+
+          1. 本 Sprint 完成度 (vs 计划)
+          2. Bug 产生/修复趋势
+          3. 风险评估
+
+          输出: GREEN(达标) / YELLOW(有风险+ crasher list) / RED(需裁剪)
+        output: "$.milestone"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [status]
+          properties:
+            status: {type: string, enum: [GREEN, YELLOW, RED]}
+            crasher_list: {type: array}
+
+      # 事件7: DESC_SCOPE (RED 时触发)
+      - name: descope
+        agent: blueberry
+        dependsOn: [milestone]
+        condition: 'milestone.status == "RED"'
+        input: "$.plan"
+        prompt: |
+          内容裁剪。保核心玩法(战斗+肉鸽循环):
+
+          1. 列出所有未完成项
+          2. 标记 CUT / KEEP / SIMPLIFY
+          3. 先砍影响面小的、边缘功能
+        output: "$.descope"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+
+      - name: descope-notify
+        agent: coconut
+        dependsOn: [descope]
+        input: "$.descope"
+        prompt: "更新任务板 + 通知团队哪些任务取消/简化。"
+        output: "$.notify"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      # ══════════════════════════════════════════════
+      # CONTENT_FREEZE: 内容冻结
+      # ══════════════════════════════════════════════
+      - name: content-freeze
+        agent: blueberry
+        dependsOn: [milestone, descope-notify]
+        condition: 'milestone.status == "GREEN"'
+        input: "$.milestone"
+        prompt: |
+          宣布内容冻结。
+          冻结: 新功能、新资产、新关卡、数值调整
+          允许: P0/P1 Bug 修复
+        output: "$.freeze"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      # ══════════════════════════════════════════════
+      # CODE_FREEZE: 代码冻结 + 终测
+      # ══════════════════════════════════════════════
+      - name: code-freeze
+        agent: coconut
+        dependsOn: [content-freeze]
+        input:
+          project: "/home/ccbot/AbyssChess"
+          build: "$.build"
+        prompt: |
+          代码冻结:
+          1. 切 release 分支
+          2. main 只接受 P0
+          3. 生成 Release Candidate
+
+          项目: {{ input.project }}
+        output: "$.rc"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+        sideEffects: [git, fs]
+
+      - name: final-qa-backend
+        agent: almond
+        dependsOn: [code-freeze]
+        input: "$.rc"
+        output: "$.final_backend"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+
+      - name: final-qa-frontend
+        agent: strawberry
+        dependsOn: [code-freeze]
+        input: "$.rc"
+        output: "$.final_frontend"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+
+      - name: sign-off
+        dependsOn: [final-qa-backend, final-qa-frontend]
+        approval:
+          approvers: ["blueberry"]
+          policy: any
+          message: "终测通过。发布上线？"
+          timeout: 4h
+          onTimeout: reject
+          contextFields: ["$.final_backend.result", "$.final_frontend.result"]
+
+      # ══════════════════════════════════════════════
+      # RELEASE: 发布上线
+      # ══════════════════════════════════════════════
+      - name: release-preflight
+        agent: coconut
+        dependsOn: [sign-off]
+        input: "$.rc"
+        prompt: |
+          上线检查清单:
+          1. RC 通过终测 ✅
+          2. P 已签批 ✅
+          3. Web Build 可用
+          4. 版本号正确
+          5. 管理网页就绪 (http://47.114.116.51)
+          6. 回滚方案就绪
+        output: "$.preflight"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      - name: deploy
+        agent: coconut
+        dependsOn: [release-preflight]
+        input:
+          project: "/home/ccbot/AbyssChess"
+          target: "web"
+        prompt: |
+          部署 Web 版本:
+          1. 推送 exports/ 到管理网页
+          2. 确认 http://47.114.116.51 可访问
+          3. 记录版本号 + Hash + 部署时间
+        output: "$.deploy"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+        sideEffects: [deploy, network]
+        onFailure: compensate
+
+      - name: live-verify
+        agents: [almond, strawberry]
+        dependsOn: [deploy]
+        prompt: |
+          线上验证:
+          1. 打开 http://47.114.116.51
+          2. 核心循环: 新游戏→战斗→奖励→篝火→下一层
+          3. 截图比对
+          4. 确认无崩溃
+        output: "$.live"
+        aggregateStrategy: vote
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+
+      - name: announce
+        agent: blueberry
+        dependsOn: [live-verify]
+        input: "$.live"
+        prompt: "发布公告。版本号、更新内容。记录到 ALIGNMENT.md。"
+        output: "$.announcement"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+
+      - name: retro
+        agent: blueberry
+        dependsOn: [announce]
+        input: "$.deploy"
+        prompt: |
+          发布复盘（3天内）:
+          1. 这次发布顺利吗？哪里卡了？
+          2. 下次怎么改进？
+          3. 更新流水线 SLA
+        output: "$.retro"
+        timeouts: {startToClose: 10m, heartbeat: 30s}
+
+    compensation:
+      strategy: reverse
+      maxCompensationAttempts: 2
+      onCompensationFailure: alert
+      actions:
+        - {forStage: deploy, agent: coconut, action: rollback, runOn: any_failure}
+
+  parameters:
+    - name: sprint_goal
+      type: string
+      required: true
+      description: "Sprint 目标（1句话），如 'P2-2: 遗物战斗接入'"
+    - name: backlog
+      type: string
+      required: false
+      description: "Backlog 任务列表"
+    - name: feature_spec
+      type: string
+      required: true
+      description: "功能设计规格 — 参考 GDD.md + DESIGN.md"
+
+  secrets:
+    - {name: llm-api-key, fromEnv: LLM_API_KEY}
+    - {name: deploy-token, fromFile: "/etc/orchestra/secrets/deploy-token"}
+
+  global:
+    heartbeatInterval: 15s
+    maxConcurrency: 4
+    timeouts:
+      workflowExecution: 8h
+      activityDefault: 30m
+    notification:
+      channels: [feishu]
+      target: "ou_f4235e1f35660e9899b9cc17e019e9e6"
+      onEvents: [failed, approval_pending, succeeded]
+    artifactsBasePath: "/opt/agent-orchestra/artifacts/abyss-chess"
+    priority: high
+    retention:
+      historyDays: 30
+      artifactsDays: 7
+      successfulRunsKeep: 100
+      failedRunsKeep: 50

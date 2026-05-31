@@ -1,0 +1,215 @@
+# ─────────────────────────────────────────────
+# AbyssChess 资产管理流水线
+#
+# 覆盖: ASSET + ASSET_REVISION
+# 项目路径: /home/ccbot/AbyssChess/assets/
+# 风格: 深渊暗紫哥特风
+# ─────────────────────────────────────────────
+apiVersion: orchestra.io/v1
+kind: Pipeline
+metadata:
+  name: abyss-chess-asset
+  namespace: abyss-chess
+  version: 1.0.0
+  labels: {project: abyss-chess, type: asset}
+  annotations: {owner: "cherry@abyss-chess.dev"}
+
+spec:
+  description: |
+    AbyssChess 资产管理。
+    资产路径: /home/ccbot/AbyssChess/assets/
+    子目录: textures/ sounds/ fonts/ theme/
+
+    来源策略:
+    1. free → 免费素材 (Game-Icons, OpenGameArt, itch.io)
+    2. ai_gen → AI 生成 + cherry 修改统一风格
+    3. custom → cherry 从零绘制
+
+    风格规范: 深渊暗紫哥特风, 参考已有 assets/textures/
+
+  agents:
+    blueberry: {role: chat, capabilities: [analyze, art-direction], mcpEndpoint: "mcp://host.docker.internal:18768", tools: [file_read, submit_approval], livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}}
+    cherry: {role: designer, capabilities: [2d-art, concept-art, ui-design, asset-export, ai-gen, asset-search, godot], mcpEndpoint: "mcp://host.docker.internal:18765", tools: [godot_edit, file_read, file_write, image_process, figma_export, asset_download], livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}}
+    mango: {role: developer, capabilities: [godot, gdscript, shader], mcpEndpoint: "mcp://host.docker.internal:18766", tools: [godot_edit, file_read, file_write], livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}}
+    strawberry: {role: tester, capabilities: [playwright, ui-test, screenshot], mcpEndpoint: "mcp://host.docker.internal:18767", tools: [playwright_run, screenshot_compare], livenessProbe: {heartbeatInterval: 15s, gracePeriod: 45s}}
+
+  pipeline:
+    stages:
+      # ══════════════════════════════════════════════
+      # ASSET[1-2]: 需求 + 来源决策
+      # ══════════════════════════════════════════════
+      - name: asset-request
+        agent: blueberry
+        input: "$.params.asset_need"
+        prompt: |
+          评估资产需求。参考 DESIGN.md 和 assets/ 已有资产:
+
+          需求: {{ input }}
+
+          决策来源:
+          - free:   免费素材库 → mango 直接下载
+          - ai_gen: AI生成 → cherry 出图+修改
+          - custom: 必须定制 → cherry 从零画
+
+          输出: 来源 + 规格(尺寸/风格/用途) + 参考图
+        output: "$.spec"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+        outputSchema:
+          type: object
+          required: [source]
+          properties:
+            source: {type: string, enum: [free, ai_gen, custom]}
+            specs: {type: string}
+            style_ref: {type: string}
+
+      # ══════════════════════════════════════════════
+      # ASSET[3]: 创建
+      # ══════════════════════════════════════════════
+      - name: create
+        agent: cherry
+        dependsOn: [asset-request]
+        condition: "asset_spec.source == 'custom' or asset_spec.source == 'ai_gen'"
+        input: "$.spec"
+        prompt: |
+          创建资产:
+
+          来源: {{ input.source }}
+          规格: {{ input.specs }}
+          风格: 深渊暗紫哥特风
+
+          输出到: /home/ccbot/AbyssChess/assets/{textures|theme}/
+
+          {{ input.source == 'ai_gen' ? 'AI生成后统一风格处理' : '从零绘制' }}
+        output: "$.asset_custom"
+        timeouts: {startToClose: 60m, heartbeat: 30s}
+        artifacts:
+          - {name: new_assets, path: "/home/ccbot/AbyssChess/assets/", type: directory, retention: 30d}
+
+      - name: free-download
+        agent: mango
+        dependsOn: [asset-request]
+        condition: "asset_spec.source == 'free'"
+        input: "$.spec"
+        prompt: |
+          从免费素材库下载资产:
+
+          需求: {{ input }}
+
+          来源: Game-Icons.net / OpenGameArt / itch.io
+          放到: /home/ccbot/AbyssChess/assets/
+        output: "$.asset_free"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+
+      # ══════════════════════════════════════════════
+      # ASSET[4]: 评审
+      # ══════════════════════════════════════════════
+      - name: review
+        agent: blueberry
+        dependsOn: [create, free-download]
+        input:
+          spec: "$.spec"
+          custom: "$.asset_custom"
+          free: "$.asset_free"
+        prompt: |
+          评审资产:
+          1. 风格是否与深渊哥特风统一？
+          2. 规格是否正确？(尺寸/格式)
+          3. 效果是否符合设计意图？
+
+          verdict: pass / fail + 修改意见
+        output: "$.review"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+        outputSchema:
+          $ref: "config/review-schema.yaml#/ReviewResult"
+
+      # ══════════════════════════════════════════════
+      # 事件8: ASSET_REVISION — 返工
+      # ══════════════════════════════════════════════
+      - name: revision-loop
+        dependsOn: [review]
+        loop:
+          body: [revise, re-review]
+          condition: 'review.verdict != "pass"'
+          maxIterations: 3
+          onMaxReached: fail
+
+      - name: revise
+        agent: cherry
+        input: "$.review"
+        prompt: |
+          修改资产。根据反馈:
+
+          反馈: {{ input.issues }}
+
+          修改后标注变更部分。
+        output: "$.revision"
+        timeouts: {startToClose: 30m, heartbeat: 30s}
+
+      - name: re-review
+        agent: blueberry
+        input:
+          original: "$.review"
+          revised: "$.revision"
+        prompt: |
+          重新评审修改后的资产:
+          逐条检查原始反馈是否已修正。
+        output: "$.review_result"
+        timeouts: {startToClose: 5m, heartbeat: 30s}
+
+      # ══════════════════════════════════════════════
+      # ASSET[5]: 导入引擎
+      # ══════════════════════════════════════════════
+      - name: import
+        agent: mango
+        dependsOn: [revision-loop]
+        condition: 'review_result.verdict == "pass"'
+        input:
+          custom: "$.asset_custom"
+          free: "$.asset_free"
+        prompt: |
+          导入资产到 Godot:
+          1. 放置到正确 assets/ 子目录
+          2. 重新导入 .import 文件
+          3. 关联场景引用
+          4. 跑 godot --headless --check-only 确认无 import 错误
+        output: "$.imported"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+        sideEffects: [git, fs]
+
+      # ══════════════════════════════════════════════
+      # ASSET[6]: QF 视觉验收
+      # ══════════════════════════════════════════════
+      - name: visual-qa
+        agent: strawberry
+        dependsOn: [import]
+        input: "$.imported"
+        prompt: |
+          视觉验证:
+          1. 启动游戏 (http://localhost:8765)
+          2. 确认新资产显示正常
+          3. 截图对比
+          4. 检查: 无撕裂/UI对齐/动画流畅
+        output: "$.visual_qa"
+        timeouts: {startToClose: 15m, heartbeat: 30s}
+
+      - name: done
+        agent: blueberry
+        dependsOn: [visual-qa]
+        condition: 'visual_qa.result == "pass"'
+        input: "$.visual_qa"
+        prompt: "资产验收通过 ✅"
+        output: "$.done"
+        timeouts: {startToClose: 1m, heartbeat: 30s}
+
+  parameters:
+    - name: asset_need
+      type: string
+      required: true
+      description: "资产需求 — 什么资产/用途/风格/规格"
+
+  global:
+    heartbeatInterval: 15s
+    maxConcurrency: 2
+    timeouts: {workflowExecution: 4h}
+    notification: {channels: [feishu], target: "blueberry", onEvents: [failed, succeeded]}
+    priority: normal
