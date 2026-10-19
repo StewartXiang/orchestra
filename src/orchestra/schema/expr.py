@@ -54,7 +54,7 @@ def validate_expression(expression: str) -> list[str]:
 # ---------- 安全守卫 ----------
 
 _FORBIDDEN_PATTERNS = [
-    r"__\w+__",          # 双下划线属性
+    r"__\w+__",  # 双下划线属性
     r"\beval\b",
     r"\bexec\b",
     r"\b__import__\b",
@@ -75,8 +75,18 @@ def _guard_expression(expr: str) -> None:
 
 # ---------- CEL 后端 ----------
 
+
 def _eval_with_cel(expression: str, state: dict[str, Any]) -> bool:
-    """使用 cel-python 求值。cel-python 不可用时抛 ImportError。"""
+    """使用 cel-python 求值。cel-python 不可用时抛 ImportError。
+
+    cel-python 0.4+ 将运行时类型从 ``CELBool``/``CELList``/``CELMap`` 重命名为
+    ``BoolType``/``ListType``/``MapType``（见 celpy.celtypes）。这里按「新名优先、
+    旧名兜底、都没有则原样透传」解析，兼容 0.1.x ~ 0.5.x，避免依赖升级再次打断
+    condition 求值。
+
+    CEL 原生逻辑运算符是 ``&&`` / ``||`` / ``!``，而 DSL（design.md）允许
+    ``and`` / ``or`` / ``not``，故编译前先归一化（跳过字符串字面量内部）。
+    """
     try:
         import celpy  # type: ignore[import-untyped]
         import celpy.celtypes as ct
@@ -84,38 +94,91 @@ def _eval_with_cel(expression: str, state: dict[str, Any]) -> bool:
         raise
 
     env = celpy.Environment()
-    ast = env.compile(expression)
+    ast = env.compile(_normalize_cel_operators(expression))
     prog = env.program(ast)
 
+    types = _resolve_cel_types(ct)
     # 将 state dict 转为 CEL 变量（顶层 key → cel activation）
-    activation: dict[str, Any] = {}
-    for key, val in state.items():
-        activation[key] = _py_to_cel(val, ct)
-
-    result = prog.evaluate(activation)
-    # CEL bool 结果
-    if isinstance(result, (bool, ct.CELBool)):
-        return bool(result)
-    return bool(result)
+    activation: dict[str, Any] = {key: _py_to_cel(val, types) for key, val in state.items()}
+    return bool(prog.evaluate(activation))
 
 
-def _py_to_cel(value: Any, ct: Any) -> Any:
-    """Python 值 → CEL 类型（尽力转换）。"""
+# 字符串字面量（用于在归一化逻辑运算符时跳过字面量内部）
+_STRING_LITERAL_RE = re.compile(r'"(?:\\.|[^"\\])*"' r"|'(?:\\.|[^'\\])*'")
+
+
+def _normalize_cel_operators(expression: str) -> str:
+    """把 DSL 的 ``and`` / ``or`` / ``not`` 归一为 CEL 的 ``&&`` / ``||`` / ``!``。
+
+    只在字符串字面量之外替换，避免 ``"rock and roll"`` 被改写。
+    """
+
+    def _fix(segment: str) -> str:
+        segment = re.sub(r"\band\b", "&&", segment)
+        segment = re.sub(r"\bor\b", "||", segment)
+        return re.sub(r"(?<![\w!])not\b", "!", segment)
+
+    parts = _STRING_LITERAL_RE.split(expression)
+    literals = _STRING_LITERAL_RE.findall(expression)
+    result = _fix(parts[0])
+    for literal, segment in zip(literals, parts[1:], strict=False):
+        result += literal + _fix(segment)
+    return result
+
+
+# 逻辑类型 → (新名, 旧名)。新名指 cel-python 0.4+，旧名指 <=0.3 的 CEL* 命名。
+_CEL_TYPE_NAMES: dict[str, tuple[str, str]] = {
+    "bool": ("BoolType", "CELBool"),
+    "int": ("IntType", "CELInt"),
+    "double": ("DoubleType", "CELDouble"),
+    "string": ("StringType", "CELString"),
+    "list": ("ListType", "CELList"),
+    "map": ("MapType", "CELMap"),
+}
+
+
+def _resolve_cel_types(ct: Any) -> dict[str, Any]:
+    """解析当前 cel-python 版本的运行时类型类（缺失的键表示不转换）。"""
+    resolved: dict[str, Any] = {}
+    for key, names in _CEL_TYPE_NAMES.items():
+        for name in names:
+            cls = getattr(ct, name, None)
+            if cls is not None:
+                resolved[key] = cls
+                break
+    return resolved
+
+
+def _wrap(cls: Any, value: Any) -> Any:
+    """用 CEL 类型类包装值；类不可用时返回原值。"""
+    if cls is None:
+        return value
+    try:
+        return cls(value)
+    except TypeError:
+        return value  # 构造签名不匹配时退回原值，保持宽松兼容
+
+
+def _py_to_cel(value: Any, types: dict[str, Any]) -> Any:
+    """Python 值 → CEL 类型（尽力转换；类型类不存在时原样透传）。"""
     if isinstance(value, bool):
-        return ct.CELBool(value)
+        return _wrap(types.get("bool"), value)
     if isinstance(value, int):
-        return ct.CELInt(value)
+        return _wrap(types.get("int"), value)
     if isinstance(value, float):
-        return ct.CELDouble(value)
+        return _wrap(types.get("double"), value)
     if isinstance(value, str):
-        return ct.CELString(value)
+        return _wrap(types.get("string"), value)
     if isinstance(value, list):
-        return ct.CELList([_py_to_cel(v, ct) for v in value])
+        return _wrap(types.get("list"), [_py_to_cel(v, types) for v in value])
     if isinstance(value, dict):
-        return ct.CELMap({ct.CELString(k): _py_to_cel(v, ct) for k, v in value.items()})
+        key_cls = types.get("string")
+        key_of = key_cls if key_cls is not None else (lambda k: k)
+        mapped = {key_of(k): _py_to_cel(v, types) for k, v in value.items()}
+        return _wrap(types.get("map"), mapped)
     if value is None:
-        return ct.CELNull(None)
-    return ct.CELString(str(value))
+        return None  # CEL `null` 即 Python None，勿包装成 NullType()
+    return _wrap(types.get("string"), str(value))
 
 
 # ---------- Fallback 后端（simpleeval 白名单）----------
@@ -175,7 +238,7 @@ def _eval_with_fallback(expression: str, state: dict[str, Any]) -> bool:
 
     dot_state = _state_to_dotdict(state)
     evaluator = EvalWithCompoundTypes(
-        names={k: v for k, v in dot_state.__dict__.items()},
+        names=dict(dot_state.__dict__.items()),
         functions={"size": safe_size, "matches": safe_matches},
     )
     try:
@@ -199,7 +262,7 @@ def _eval_pure_python(expression: str, state: dict[str, Any]) -> bool:
         "size": len,
     }
     try:
-        result = eval(py_expr, {"__builtins__": {}}, namespace)  # noqa: S307
+        result = eval(py_expr, {"__builtins__": {}}, namespace)
     except Exception as e:
         raise InvalidInput(f"表达式求值失败: {py_expr!r} — {e}") from e
     return bool(result)

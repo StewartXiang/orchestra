@@ -18,31 +18,45 @@ from typing import Any
 from ..domain.errors import SchemaViolation
 
 # 简单 JSONPath 子集：$.a.b.c[0].d
-_SIMPLE_JSONPATH_RE = re.compile(r"^\$(\.[a-zA-Z_][a-zA-Z0-9_]*|\[\d+\])*$")
+# 段语法：.key（允许连字符，如 $.quality-gate）/ [0] / ['quoted'] / ["quoted"]
+_SEGMENT_RE = re.compile(
+    r"\.([A-Za-z_][A-Za-z0-9_-]*)"  # .key
+    r"|\[(\d+)\]"  # [0]
+    r"|\['([^']*)'\]"  # ['quoted key']
+    r'|\["([^"]*)"\]'  # ["quoted key"]
+)
 
 
 def parse_path(expr: str) -> list[str | int]:
     """解析 JSONPath 表达式为路径段列表。
 
-    仅支持简单路径 ``$.a.b.c`` 和 ``$.a[0].b``。
+    支持 ``$.a.b.c``、``$.a[0].b``、``$.a['带-连字符 的键']``。
     复杂表达式（过滤器、通配符）视为不可静态分析，返回空列表。
 
-    :raises InvalidInput: 不合法的 JSONPath 语法
+    注意：段名允许连字符（``$.quality-gate``）。Stage 名常含 ``-``
+    （quality-gate / review-loop / fix-review-issues），若拒绝会静默丢失
+    状态写入，故此处必须放行。
+
+    :return: 路径段列表；无法静态解析时返回 ``[]``（不抛异常）
     """
     if not expr.startswith("$"):
         return []
-    if not _SIMPLE_JSONPATH_RE.match(expr):
-        return []  # 复杂表达式，静态分析跳过
     segments: list[str | int] = []
-    rest = expr[1:]  # 去掉 $
-    for part in re.split(r"(?=\.|\[)", rest):
-        part = part.lstrip(".")
-        if not part:
-            continue
-        if part.startswith("[") and part.endswith("]"):
-            segments.append(int(part[1:-1]))
+    pos = 1
+    for match in _SEGMENT_RE.finditer(expr, 1):
+        if match.start() != pos:
+            return []  # 段之间出现无法解析的内容 → 复杂表达式
+        pos = match.end()
+        if match.group(1) is not None:
+            segments.append(match.group(1))
+        elif match.group(2) is not None:
+            segments.append(int(match.group(2)))
+        elif match.group(3) is not None:
+            segments.append(match.group(3))
         else:
-            segments.append(part)
+            segments.append(match.group(4))
+    if pos != len(expr):
+        return []  # 结尾有残留内容 → 复杂表达式
     return segments
 
 
@@ -78,13 +92,17 @@ def set_value(state: dict[str, Any], path: str, value: Any) -> None:
     for seg in segments[:-1]:
         if isinstance(seg, int):
             if not isinstance(current, list):
-                raise SchemaViolation(f"路径 {path!r} 中间段期望 list，得到 {type(current).__name__}")
+                raise SchemaViolation(
+                    f"路径 {path!r} 中间段期望 list，得到 {type(current).__name__}"
+                )
             while len(current) <= seg:
                 current.append({})
             current = current[seg]
         else:
             if not isinstance(current, dict):
-                raise SchemaViolation(f"路径 {path!r} 中间段期望 dict，得到 {type(current).__name__}")
+                raise SchemaViolation(
+                    f"路径 {path!r} 中间段期望 dict，得到 {type(current).__name__}"
+                )
             if seg not in current:
                 current[seg] = {}
             current = current[seg]
@@ -145,10 +163,7 @@ def validate_input_has_upstream(
     for _name, out_path in declared_outputs.items():
         if out_path == input_path or input_path.startswith(out_path + "."):
             return None
-    return (
-        f"stage '{stage_name}' 的 input '{input_path}' "
-        f"没有对应的上游 stage output 写入"
-    )
+    return f"stage '{stage_name}' 的 input '{input_path}' 没有对应的上游 stage output 写入"
 
 
 def _paths_overlap(a: list[str | int], b: list[str | int]) -> bool:
