@@ -2,9 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    # master 是默认分支（此前只写 main/develop，导致 CI 从未触发）
+    branches: [master, main, develop]
   pull_request:
-    branches: [main, develop]
+    branches: [master, main, develop]
 
 env:
   PYTHON_VERSION: "3.11"
