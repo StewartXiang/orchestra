@@ -10,6 +10,16 @@
 
 ## 处置（标准流程）
 
+0. **先排除误报**：确认 Replayer 与 Worker 用同一个 `workflow_runner` 和 DataConverter。
+   沙箱 passthrough 模块集合不一致时，Workflow 内的惰性 import（opentelemetry / celpy 等）
+   会被沙箱拦截，表现为 `NondeterminismError`，但代码其实没问题。
+   ```python
+   from orchestra.worker.registry import build_workflow_runner
+   Replayer(workflows=ALL_WORKFLOWS,
+            workflow_runner=build_workflow_runner(),   # ← 必须
+            data_converter=pydantic_data_converter)
+   ```
+   已验证：`test_replay_compat.py` 即按此构造。
 1. 跑 `pytest tests/replay -v` 取失败堆栈，记下 Event 类型 + Workflow 名
 2. `git log --oneline -- src/orchestra/workflows/<file>` 找最近 commit
 3. `git diff <prev>..HEAD -- src/orchestra/workflows/<file>` 看改动

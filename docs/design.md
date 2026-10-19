@@ -1004,7 +1004,12 @@ orchestra version                                   # CLI / 引擎 / Temporal �
 async def test_pipeline_replay():
     with open("fixtures/wf_history.json") as f:
         history = json.load(f)
-    replayer = WorkflowReplayer(workflows=[PipelineWorkflow])
+    # ⚠️ 必须复用 Worker 的 runner + DataConverter，否则沙箱 passthrough 不一致会误报
+    replayer = WorkflowReplayer(
+        workflows=[PipelineWorkflow],
+        workflow_runner=build_workflow_runner(),
+        data_converter=pydantic_data_converter,
+    )
     await replayer.replay_workflow(history)
 ```
 

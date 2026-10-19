@@ -20,7 +20,9 @@ dependencies = [
     "opentelemetry-instrumentation>=0.45b0",
     "structlog>=24.1.0",
     "pydantic>=2.6.0",
-    "cel-python>=0.1.5",
+    # 上界：0.4 起 celtypes 运行时类型由 CELBool/CELList 改名为 BoolType/ListType，
+    # 0.5 沿用了新名。expr.py 已做双版本兼容，但锁上界以防 0.6 再变。
+    "cel-python>=0.1.5,<0.6",
     "redis>=5.0.0",
     "aiosqlite>=0.20.0",
     "cryptography>=42.0.0",
@@ -53,7 +55,30 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF"]
-ignore = ["E501"]
+ignore = [
+    "E501",
+    # 全文中文 docstring / 注释 / 文案是刻意的，全角标点不是「歧义字符」
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    # Pydantic 模型字段直接用 DSL/YAML 的 camelCase 键名（model_dump 需保持线上格式），
+    # 例如 ReviewGate.agentSelector / outputSchema，不能改成 snake_case
+    "N815",
+    # 项目统一使用 class X(str, Enum)；迁移到 enum.StrEnum 会改变 str() 语义，另行立项
+    "UP042",
+    # TimeoutError / A001 是 orchestra.domain.errors 的领域错误名，与内建同名是有意的
+    "A004",
+    "A001",
+    # 领域错误分类是公开 API（design.md "错误分类总表"），名字不带 Error 后缀
+    "N818",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# 测试代码：嵌套 `async with env: async with worker:` 表达依赖层次更清晰；
+# 局部常量按测试语义命名；需断言框架级 / 沙箱级宽泛异常
+"tests/**" = ["N806", "B017", "SIM117"]
+# conftest 需要先 sys.path.insert 再 import orchestra
+"tests/conftest.py" = ["E402"]
 
 [tool.mypy]
 strict = true
