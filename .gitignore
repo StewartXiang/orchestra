@@ -60,6 +60,8 @@ logs/
 # Replay fixture（生产录制可能含敏感数据，单独 git LFS）
 tests/replay/fixtures/*.json
 !tests/replay/fixtures/README.md
+# 合成 fixture（mock Adapter 录制、无 PII）随仓库提交，供 CI replay 回归
+!tests/replay/fixtures/synthetic_*.json
 
 # 本地 issue（开发追踪，不进版本控制）
 .issues/

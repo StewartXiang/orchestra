@@ -7,21 +7,22 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
 
 from ..domain.agent import AgentCapabilities, AgentHealth, AgentMetrics, Role
-from ..domain.enums import AgentStatus, HealthStatus
+from ..domain.enums import HealthStatus
 from ..domain.state import Checkpoint, ProgressInfo, TaskInput, TaskOutput
 
 
 class MockBehavior(str, Enum):
     SUCCESS = "success"
     FAIL = "fail"
-    SLOW = "slow"           # 延迟后成功（测试超时）
-    CANCEL = "cancel"       # 执行中模拟取消
+    SLOW = "slow"  # 延迟后成功（测试超时）
+    CANCEL = "cancel"  # 执行中模拟取消
     HEARTBEAT_STOP = "heartbeat_stop"  # 停止心跳（测试 liveness timeout）
 
 
@@ -44,6 +45,8 @@ class MockAgentAdapter:
     tools: list[str] = field(default_factory=lambda: ["file_read", "file_write"])
     behavior: MockBehavior = MockBehavior.SUCCESS
     output: dict[str, Any] = field(default_factory=dict)
+    # 按调用次序返回不同输出（最后一次重复）；用于 review fail→pass 这类多轮场景
+    output_sequence: list[dict[str, Any]] | None = None
     error_message: str = "mock error"
     error_code: str = "TransientError"
     slow_seconds: float = 2.0
@@ -62,9 +65,9 @@ class MockAgentAdapter:
 
         if on_heartbeat:
             self.heartbeat_count += 1
-            on_heartbeat(ProgressInfo(
-                stage=task.stage_name, phase="started", progress=0, attempt=1
-            ))
+            on_heartbeat(
+                ProgressInfo(stage=task.stage_name, phase="started", progress=0, attempt=1)
+            )
 
         if self.behavior == MockBehavior.SLOW:
             await asyncio.sleep(self.slow_seconds)
@@ -81,19 +84,25 @@ class MockAgentAdapter:
 
         if on_heartbeat:
             self.heartbeat_count += 1
-            on_heartbeat(ProgressInfo(
-                stage=task.stage_name, phase="running", progress=50, attempt=1
-            ))
+            on_heartbeat(
+                ProgressInfo(stage=task.stage_name, phase="running", progress=50, attempt=1)
+            )
 
         # SUCCESS
         if on_heartbeat:
             self.heartbeat_count += 1
-            on_heartbeat(ProgressInfo(
-                stage=task.stage_name, phase="completing", progress=100, attempt=1
-            ))
+            on_heartbeat(
+                ProgressInfo(stage=task.stage_name, phase="completing", progress=100, attempt=1)
+            )
+
+        output = self.output
+        if self.output_sequence:
+            # call_count 已在入口自增，故第一次调用取 index 0
+            idx = min(self.call_count - 1, len(self.output_sequence) - 1)
+            output = self.output_sequence[idx]
 
         return TaskOutput(
-            output=self.output,
+            output=output,
             tokens_consumed=100,
             cost_usd=0.001,
             duration_seconds=0.1,

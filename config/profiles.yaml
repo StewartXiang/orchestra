@@ -105,3 +105,30 @@ profiles:
     labels: {team: ops}
     maxConcurrency: 2
     description: "葡萄 — 备用 / 通用兜底"
+
+  # ===========================================================================
+  # mod_add PR review-loop agents（dsh headless 后端；由 agent_server.py 提供）
+  # 这两个 profile 是「修改 / 检视」闭环的实体，必须保持：
+  #   不同端口 + 不同模型 + 每次调用全新会话
+  # ===========================================================================
+  pr-reviewer:
+    role: chat
+    capabilities: [review, analyze, mlir, shell]
+    mcpEndpoint: "mcp://127.0.0.1:19002"
+    model: deepseek-v4-pro
+    tools: [bash, fs_read, submit_result]
+    taskQueue: orchestra-pr-loop
+    labels: {team: pr-loop, duty: reviewer}
+    maxConcurrency: 1
+    description: "PR 检视 agent（独立会话，deepseek-v4-pro）"
+
+  pr-fixer:
+    role: developer
+    capabilities: [git, cpp, mlir, shell, build]
+    mcpEndpoint: "mcp://127.0.0.1:19001"
+    model: deepseek-v4.1-flash
+    tools: [bash, fs_read, fs_write, git_commit, git_push]
+    taskQueue: orchestra-pr-loop
+    labels: {team: pr-loop, duty: fixer}
+    maxConcurrency: 1
+    description: "PR 修复 agent（每轮 commit+push，deepseek-v4.1-flash）"

@@ -43,22 +43,24 @@ def _load_fixtures() -> list[tuple[str, str]]:
 
 def _temporal_available() -> bool:
     try:
-        from temporalio.worker import Replayer  # noqa: F401
         from temporalio.client import WorkflowHistory  # noqa: F401
+        from temporalio.worker import Replayer  # noqa: F401
+
         return True
     except ImportError:
         return False
 
 
-skip_no_temporal = pytest.mark.skipif(
-    not _temporal_available(),
-    reason="temporalio not installed"
-)
+skip_no_temporal = pytest.mark.skipif(not _temporal_available(), reason="temporalio not installed")
 
 _FIXTURES = _load_fixtures()
 
 
-@pytest.mark.parametrize("name,history_json", _FIXTURES or [("__no_fixtures__", "{}")])
+@pytest.mark.parametrize(
+    "name,history_json",
+    _FIXTURES or [("__no_fixtures__", "{}")],
+    ids=[name for name, _ in _FIXTURES] or ["__no_fixtures__"],
+)
 @skip_no_temporal
 @pytest.mark.replay
 def test_workflow_replay(name: str, history_json: str) -> None:
@@ -66,15 +68,35 @@ def test_workflow_replay(name: str, history_json: str) -> None:
     if name == "__no_fixtures__":
         pytest.skip("No replay fixtures — run `python scripts/record_fixtures.py`")
 
-    from temporalio.worker import Replayer
     from temporalio.client import WorkflowHistory
+    from temporalio.worker import Replayer
+
+    from orchestra.worker.registry import build_workflow_runner
     from orchestra.workflows import ALL_WORKFLOWS
 
     async def _replay() -> None:
         history = WorkflowHistory.from_json(name, history_json)
-        replayer = Replayer(workflows=ALL_WORKFLOWS)
+        # ⚠️ 必须复用 Worker 的 runner + DataConverter：沙箱 passthrough 集合不一致
+        # 会把 Workflow 内惰性 import 误判为非确定性（NondeterminismError）。
+        replayer = Replayer(
+            workflows=ALL_WORKFLOWS,
+            workflow_runner=build_workflow_runner(),
+            data_converter=_data_converter(),
+        )
         result = await replayer.replay_workflow(history)
         if result.replay_failure is not None:
             raise result.replay_failure
 
     asyncio.run(_replay())
+
+
+def _data_converter():
+    """与 Worker 一致的 DataConverter（Pydantic v2，缺失时回退默认）。"""
+    try:
+        from temporalio.contrib.pydantic import pydantic_data_converter
+
+        return pydantic_data_converter
+    except ImportError:
+        from temporalio.converter import DataConverter
+
+        return DataConverter.default

@@ -5,36 +5,85 @@ DataConverter 位于 Client 层（Client.connect 时传入），Worker 自动继
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from temporalio.worker import Worker
 
 from ..activities import ALL_ACTIVITIES
 from ..workflows import ALL_WORKFLOWS
 
+if TYPE_CHECKING:
+    import temporalio.client
+    from temporalio.worker import WorkflowRunner
+
 
 _PASSTHROUGH_MODULES = [
-    "pydantic", "pydantic.plugin", "pydantic.plugin._loader",
-    "pydantic._internal", "pydantic.deprecated", "pydantic_core",
+    "pydantic",
+    "pydantic.plugin",
+    "pydantic.plugin._loader",
+    "pydantic._internal",
+    "pydantic.deprecated",
+    "pydantic_core",
     "annotated_types",  # Pydantic 依赖
-    "zoneinfo", "sysconfig", "platform", "io", "pathlib",
-    "json", "yaml", "datetime", "re", "typing",
-    "celpy", "celpy.celtypes",
+    "zoneinfo",
+    "sysconfig",
+    "platform",
+    "io",
+    "pathlib",
+    "json",
+    "yaml",
+    "datetime",
+    "re",
+    "typing",
+    "celpy",
+    "celpy.celtypes",
     "simpleeval",  # expr 表达式求值回退
     "orchestra.state.codec",  # 加密 Codec
-    "cryptography", "cryptography.hazmat",
+    "cryptography",
+    "cryptography.hazmat",
     "cryptography.hazmat.primitives",
     "cryptography.hazmat.primitives.ciphers",
     "cryptography.hazmat.primitives.ciphers.aead",
     "base64",  # codec 依赖
-    "opentelemetry", "opentelemetry.propagators", "opentelemetry.propagators.textmap",
-    "opentelemetry.context", "opentelemetry.context.context",
+    "opentelemetry",
+    "opentelemetry.propagators",
+    "opentelemetry.propagators.textmap",
+    "opentelemetry.context",
+    "opentelemetry.context.context",
     "opentelemetry.environment_variables",
-    "opentelemetry.util", "opentelemetry.util._importlib_metadata",
-    "orchestra.observability", "orchestra.observability.tracing",
+    "opentelemetry.util",
+    "opentelemetry.util._importlib_metadata",
+    "orchestra.observability",
+    "orchestra.observability.tracing",
 ]
 
 
+def build_workflow_runner(*, unsandboxed: bool = False) -> WorkflowRunner:
+    """构建带项目 passthrough 白名单的 WorkflowRunner。
+
+    默认开启 Temporal 沙箱并 passthrough ``_PASSTHROUGH_MODULES``（CLAUDE.md §3
+    确定性铁律）。**Replayer 必须复用同一个 runner**：否则 passthrough 模块集合
+    不同，Workflow 内 opentelemetry / celpy 等惰性 import 会被沙箱拦截，replay
+    会误报 NondeterminismError（参见 runbook/02-replay-failure.md）。
+
+    :param unsandboxed: True 时不启用沙箱（仅限本地排障，CI 禁用）
+    """
+    if unsandboxed:
+        from temporalio.worker import UnsandboxedWorkflowRunner
+
+        return UnsandboxedWorkflowRunner()
+
+    from temporalio.worker.workflow_sandbox import (
+        SandboxedWorkflowRunner,
+        SandboxRestrictions,
+    )
+
+    restrictions = SandboxRestrictions.default.with_passthrough_modules(*_PASSTHROUGH_MODULES)
+    return SandboxedWorkflowRunner(restrictions=restrictions)
+
+
 def build_worker(
-    client: "temporalio.client.Client",
+    client: temporalio.client.Client,
     task_queue: str,
     *,
     max_concurrent_activities: int = 5,
@@ -46,26 +95,13 @@ def build_worker(
     默认开启 Temporal 沙箱（CLAUDE.md §3 确定性铁律）。
     测试环境需在 build_worker 前预加载 Pydantic 等模块（见 conftest.py _preload）。
     """
-    if unsandboxed:
-        from temporalio.worker import UnsandboxedWorkflowRunner
-        runner = UnsandboxedWorkflowRunner()
-    else:
-        from temporalio.worker.workflow_sandbox import (
-            SandboxRestrictions,
-            SandboxedWorkflowRunner,
-        )
-        restrictions = SandboxRestrictions.default.with_passthrough_modules(
-            *_PASSTHROUGH_MODULES
-        )
-        runner = SandboxedWorkflowRunner(restrictions=restrictions)
-
     return Worker(
         client,
         task_queue=task_queue,
         workflows=ALL_WORKFLOWS,
         activities=ALL_ACTIVITIES,
         max_concurrent_activities=max_concurrent_activities,
-        workflow_runner=runner,
+        workflow_runner=build_workflow_runner(unsandboxed=unsandboxed),
     )
 
 
@@ -74,7 +110,7 @@ async def make_client(
     namespace: str = "default",
     *,
     encryption_key: bytes | None = None,
-) -> "temporalio.client.Client":
+) -> temporalio.client.Client:
     """创建带 Pydantic v2 DataConverter + AES-256-GCM 加密的 Temporal Client。
 
     加密 Codec（EncryptingCodec）自动加密含敏感字段（secret/token/password/apikey）
@@ -90,6 +126,7 @@ async def make_client(
     # 构建 DataConverter（优先 Pydantic，回退默认）
     try:
         from temporalio.contrib.pydantic import pydantic_data_converter  # type: ignore[import-untyped]
+
         base_converter = pydantic_data_converter
     except ImportError:
         base_converter = DataConverter.default
@@ -100,6 +137,7 @@ async def make_client(
     # pydantic_data_converter 是 DataConverter 实例，通过取其类属性重建
     if base_converter is not DataConverter.default:
         from temporalio.contrib.pydantic import PydanticPayloadConverter  # type: ignore[import-untyped]
+
         converter = DataConverter(
             payload_converter_class=PydanticPayloadConverter,
             payload_codec=codec,
