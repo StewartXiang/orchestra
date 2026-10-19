@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from temporalio import activity
+from temporalio.exceptions import CancelledError
 
 from ..adapters.registry import get_adapter, list_adapter_names
 from ..observability.logging import get_logger
@@ -81,16 +82,12 @@ async def resolve_agent_by_selector(inp: AgentResolveInput) -> ResolvedAgent:
     adapter_names = list_adapter_names()
 
     if activity.is_cancelled():
-        from temporalio.exceptions import CancelledError
-
         raise CancelledError()
 
     activity.heartbeat({"phase": "discovering", "adapters_total": len(adapter_names)})
 
     for idx, name in enumerate(adapter_names):
         if activity.is_cancelled():
-            from temporalio.exceptions import CancelledError
-
             raise CancelledError()
 
         try:
@@ -213,8 +210,6 @@ async def resolve_all_matching_agents(inp: AgentResolveInput) -> AgentResolveAll
     adapter_names = list_adapter_names()
 
     if activity.is_cancelled():
-        from temporalio.exceptions import CancelledError
-
         raise CancelledError()
 
     for idx, name in enumerate(adapter_names):

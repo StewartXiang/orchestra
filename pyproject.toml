@@ -100,3 +100,14 @@ markers = [
     "chaos: chaos / failure injection",
     "load: throughput / latency baselines",
 ]
+
+[tool.coverage.run]
+source = ["src/orchestra"]
+
+[tool.coverage.report]
+# 仅排除「不可能被执行」的类型层代码，不排除任何业务分支
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",  # pipeline_base 的纯类型桩（运行时总被 Mixin 覆盖）
+    'if __name__ == "__main__":',
+]

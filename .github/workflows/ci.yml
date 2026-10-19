@@ -67,8 +67,14 @@ jobs:
       - uses: astral-sh/setup-uv@v3
       - run: uv python install ${{ env.PYTHON_VERSION }}
       - run: uv sync --all-extras
-      - name: Pytest unit
-        run: uv run pytest tests/unit -v --cov=src/orchestra --cov-report=xml --cov-fail-under=80
+      - name: Pytest unit + integration (coverage)
+        # 覆盖率口径 = unit + integration：workflows/CLI 等主要由集成测试覆盖，
+        # 只量 tests/unit 会因为分层错配而长期达不到阈值（详见 CHANGELOG）。
+        # chaos（故障注入）/ load（性能基线）不计入覆盖率。
+        run: >
+          uv run pytest tests/unit tests/integration -v
+          --cov=src/orchestra --cov-report=xml --cov-report=term-missing
+          --cov-fail-under=80
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-xml
