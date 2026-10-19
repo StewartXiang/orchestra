@@ -76,7 +76,7 @@ class DynamicExecutionMixin(PipelineWorkflowBase):
             from ..schema.template import render_dict
 
         # agentSelector 解析缓存：{(role, frozenset(caps)) → agent_name}
-        _selector_cache: dict[tuple, str] = {}
+        _selector_cache: dict[tuple[Any, ...], str] = {}
 
         # 信号量控制并行度
         max_parallel = dynamic.maxParallel or 1

@@ -13,8 +13,8 @@ from datetime import timedelta
 from enum import Enum
 from typing import Any
 
-from ..domain.agent import AgentCapabilities, AgentHealth, AgentMetrics, Role
-from ..domain.enums import HealthStatus
+from ..domain.agent import AgentCapabilities, AgentHealth, AgentMetrics
+from ..domain.enums import HealthStatus, Role
 from ..domain.state import Checkpoint, ProgressInfo, TaskInput, TaskOutput
 
 

@@ -50,7 +50,7 @@ class RedisIdempotencyStore(IdempotencyStore):
 
     async def _get_redis(self) -> Any:
         if self._redis is None:
-            import redis.asyncio as aioredis  # type: ignore[import-untyped]
+            import redis.asyncio as aioredis
 
             self._redis = await aioredis.from_url(self._url, decode_responses=True)
         return self._redis
@@ -121,7 +121,7 @@ class SQLiteIdempotencyStore(IdempotencyStore):
 
     def __init__(self, db_path: str | Path = "idempotency.db") -> None:
         self._db_path = str(db_path)
-        self._db: Any = None
+        self._db: sqlite3.Connection | None = None
 
     def _get_sync_conn(self) -> sqlite3.Connection:
         import sqlite3 as _sqlite3
@@ -130,7 +130,7 @@ class SQLiteIdempotencyStore(IdempotencyStore):
             self._db = _sqlite3.connect(self._db_path, check_same_thread=False)
             self._db.executescript(_SQLITE_SCHEMA)
             self._db.commit()
-        return self._db  # type: ignore[return-value]
+        return self._db
 
     async def get(self, key: str) -> Any | None:
         import asyncio

@@ -18,6 +18,7 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from temporalio import activity
 
@@ -43,8 +44,8 @@ class AgentTaskInput:
     pipeline_name: str
     cache_enabled: bool = False  # stage.cache.enabled
     cache_ttl_seconds: int = 86400  # 默认 24h
-    input_schema: dict | None = None  # JSON Schema for input validation
-    output_schema: dict | None = None  # JSON Schema for output validation
+    input_schema: dict[str, Any] | None = None  # JSON Schema for input validation
+    output_schema: dict[str, Any] | None = None  # JSON Schema for output validation
     schema_violation_policy: str = "fail"  # "fail" | "warn"
 
 
@@ -148,9 +149,10 @@ async def execute_agent_task(inp: AgentTaskInput) -> StageOutput:
 
     # 记录指标
     if output:
+        role_obj = getattr(adapter, "_role", None)
         record_llm_usage(
             task.agent_name,
-            getattr(adapter, "_role", "unknown").value if hasattr(adapter, "_role") else "unknown",
+            role_obj.value if role_obj is not None else "unknown",
             output.tokens_consumed,
             output.cost_usd,
         )
@@ -273,7 +275,7 @@ def _extract_structured_output(
 
 def _validate_schema(
     data: object,
-    schema: dict,
+    schema: dict[str, Any],
     stage_name: str,
     direction: str,  # "input" | "output"
     policy: str,  # "fail" | "warn"

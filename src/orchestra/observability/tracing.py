@@ -18,7 +18,7 @@ def init_tracing(service_name: str = "orchestra-worker", otlp_endpoint: str | No
         resource = Resource.create({"service.name": service_name})
         provider = TracerProvider(resource=resource)
         if otlp_endpoint:
-            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter  # type: ignore[import-untyped]
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter  # type: ignore[import-not-found]
 
             provider.add_span_processor(
                 BatchSpanProcessor(OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True))

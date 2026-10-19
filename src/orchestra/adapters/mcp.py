@@ -20,8 +20,8 @@ from typing import Any
 
 import httpx
 
-from ..domain.agent import AgentCapabilities, AgentHealth, AgentMetrics, Role
-from ..domain.enums import HealthStatus
+from ..domain.agent import AgentCapabilities, AgentHealth, AgentMetrics
+from ..domain.enums import HealthStatus, Role
 from ..domain.errors import AuthError, MCPDisconnect, TimeoutError, TransientError
 from ..domain.state import Checkpoint, ProgressInfo, TaskInput, TaskOutput
 from .sandbox import Sandbox

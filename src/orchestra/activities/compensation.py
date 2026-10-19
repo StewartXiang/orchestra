@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from temporalio import activity
 
@@ -23,11 +24,11 @@ class CompensationInput:
     for_stage: str
     agent_name: str
     action: str
-    input_data: dict
+    input_data: dict[str, Any]
 
 
 @activity.defn
-async def run_compensation(inp: CompensationInput) -> dict:
+async def run_compensation(inp: CompensationInput) -> dict[str, Any]:
     """执行单个补偿动作。"""
     # ① 心跳
     activity.heartbeat({"phase": "compensation_started", "for_stage": inp.for_stage})
@@ -37,7 +38,8 @@ async def run_compensation(inp: CompensationInput) -> dict:
     store = get_store()
 
     # ② 幂等查询
-    if cached := await store.get(idempotency_key):
+    cached: dict[str, Any] | None = await store.get(idempotency_key)
+    if cached:
         logger.info("compensation_cached", for_stage=inp.for_stage, action=inp.action)
         return cached
 

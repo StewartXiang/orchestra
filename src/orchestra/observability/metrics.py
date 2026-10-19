@@ -119,15 +119,15 @@ except ImportError:
         def observe(self, amount: float) -> None:
             pass
 
-    _noop = _NoOp()
-    pipeline_runs_total = stage_failure_total = agent_task_total = llm_tokens_consumed_total = _noop  # type: ignore[assignment]
-    llm_cost_usd_total = approval_timeout_total = pipeline_replay_failure_total = _noop  # type: ignore[assignment]
-    pipeline_duration_seconds = stage_duration_seconds = agent_task_duration_seconds = _noop  # type: ignore[assignment]
-    task_queue_latency_seconds = pipeline_state_size_bytes = _noop  # type: ignore[assignment]
-    pipeline_active = agent_status = agent_heartbeat_lag_seconds = agent_busy_slots = _noop  # type: ignore[assignment]
+    _noop: Any = _NoOp()
+    pipeline_runs_total = stage_failure_total = agent_task_total = llm_tokens_consumed_total = _noop
+    llm_cost_usd_total = approval_timeout_total = pipeline_replay_failure_total = _noop
+    pipeline_duration_seconds = stage_duration_seconds = agent_task_duration_seconds = _noop
+    task_queue_latency_seconds = pipeline_state_size_bytes = _noop
+    pipeline_active = agent_status = agent_heartbeat_lag_seconds = agent_busy_slots = _noop
     task_queue_depth = approval_pending_total = temporal_worker_alive = (
         temporal_event_history_size
-    ) = _noop  # type: ignore[assignment]
+    ) = _noop
 
 
 def record_stage_failure(stage: str, reason: str) -> None:
@@ -142,4 +142,4 @@ def record_llm_usage(profile: str, model: str, tokens: int, cost_usd: float) -> 
 def start_metrics_server(port: int = 9100) -> None:
     if not _PROMETHEUS_AVAILABLE:
         return
-    start_http_server(port, registry=DEFAULT_REGISTRY)  # type: ignore[name-defined]
+    start_http_server(port, registry=DEFAULT_REGISTRY)

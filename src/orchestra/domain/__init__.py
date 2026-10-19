@@ -73,7 +73,6 @@ from .pipeline import (
     PipelineSpec,
     PipelineStatus,
     Retention,
-    ReviewGate,
     SecretRef,
     Stage,
     StageStatus,
@@ -82,6 +81,7 @@ from .pipeline import (
 )
 from .review import (
     ReviewArea,
+    ReviewGate,
     ReviewIssue,
     ReviewOwner,
     ReviewResult,

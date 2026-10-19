@@ -17,24 +17,44 @@
 - **ReviewIssue.area 与文档不一致**：design.md / `config/review-schema.yaml` 的
   required 列表不含 `area`，Pydantic 却必填，按文档产出的 review 结果会解析失败。
   改为可选。
+- **手动审批不生效**：`_get_stage_approval` 恒返回 `None`，`approve` update 永远不把
+  状态置为 approved（只有超时自动审批与 `ou_`/`dev_` 占位符自动通过能走通）。
+  删除该死方法，`approve` 直接调用 `_check_approval_policy`。
+- **若干 CLI 子命令调用不存在的 SDK API**（运行时报错，此前无测试覆盖）：
+  `schedule` 的 `Schedule*` 改从 `temporalio.client` 导入；`replay` 改用
+  `temporalio.worker.Replayer` + `WorkflowHistory`；`re-run` 改用
+  `workflow_service.reset_workflow_execution`（`WorkflowHandle` 无 `reset`）；
+  `health` 去掉不存在的 `ServiceClient.close()`；`status` 去掉对 async iterator 的
+  `await`。
+- **加密 Codec 的 metadata key 类型错误**：`_ENCRYPTION_METADATA_KEY` 为 `bytes`，
+  而 `Payload.metadata` 是 `str → bytes`，加密路径实际会抛错；改为 `"encoding"`。
+- **condition 未声明变量报错语义**（mypy/严格化顺带）：`validator.py` 中 except
+  变量 `e` 与循环变量重名。
+- `mypy --strict src` 由 **85 errors → 0**（新增 `PipelineWorkflowBase` 类型基类、
+  补齐泛型参数与返回类型、修正 temporalio API、删除陈旧 `# type: ignore`）。
 - 清理未使用 import（`child_workflows` / `signals` / `control_flow`）。
 
 ### Added
 - `tests/integration/test_workflow_review_gate.py`：Review Gate 三条路径
   （pass / fail→修复→重测→pass / maxIterations 耗尽失败）。
+- `tests/unit/test_workflow_approval_update.py`：手动 approve/reject update 回归
+  （集成测试用 time-skipping，无法稳定测交互式 Update，故用单元测试覆盖）。
+- `tests/unit/test_workflow_structure.py`：守卫 Mixin 由沙箱加载、workflow 文件 ≤400 行。
 - Replay fixtures：`synthetic_minimal_happy` / `synthetic_review_gate_pass` /
   `synthetic_review_gate_loop`（mock 录制、无 PII，随仓库提交）。
 - `MockAgentAdapter.output_sequence` + `build_registry(mock_output_sequences=...)`：
   支持同一 Agent 多轮返回不同输出。
 
 ### Changed
-- `workflows/pipeline_workflow.py` 由 1185 行拆为 7 个模块（本文件 363 行），
-  满足 CLAUDE.md §5「单文件 ≤400 行」：新增 `pipeline_types` / `stage_execution` /
-  `dynamic_execution` / `review_gate` / `control_flow` / `workflow_utils`。
+- `workflows/pipeline_workflow.py` 由 1185 行拆为 8 个模块（本文件 389 行），
+  满足 CLAUDE.md §5「单文件 ≤400 行」：新增 `pipeline_base` / `pipeline_types` /
+  `stage_execution` / `dynamic_execution` / `review_gate` / `control_flow` /
+  `workflow_utils`。
+- `ruff check` 1549 → 0、`ruff format` 统一 120 个文件（CI lint/format 门禁转绿）。
 
 ### Tests
-- 收集总数 141：unit 102 / integration 26 / replay 3 / chaos 7 / load 3。
-  （0.1.0 条目中的 "108 collected" 为误记。）
+- 收集总数 149：unit 107 / integration 26 / replay 3 / chaos 7 / load 3
+  （另有 2 skipped、1 xfail）。（0.1.0 条目中的 "108 collected" 为误记。）
 
 ## [0.1.0] — 2026-05-19
 

@@ -47,7 +47,7 @@ def parse_pipeline(source: str | Path | dict[str, Any]) -> Pipeline:
     :param source: 文件路径 / YAML 字符串 / 已解析的 dict
     :raises InvalidInput: YAML 语法错误或 Pydantic 校验失败
     """
-    data = source if isinstance(source, dict) else load_yaml(source)  # type: ignore[arg-type]
+    data = source if isinstance(source, dict) else load_yaml(source)
     _assert_kind(data, "Pipeline")
     try:
         return Pipeline.model_validate(data)
@@ -59,7 +59,7 @@ def parse_pipeline(source: str | Path | dict[str, Any]) -> Pipeline:
 
 def parse_pipeline_run(source: str | Path | dict[str, Any]) -> PipelineRun:
     """解析 PipelineRun。"""
-    data = source if isinstance(source, dict) else load_yaml(source)  # type: ignore[arg-type]
+    data = source if isinstance(source, dict) else load_yaml(source)
     _assert_kind(data, "PipelineRun")
     try:
         return PipelineRun.model_validate(data)
@@ -72,7 +72,8 @@ def parse_pipeline_run(source: str | Path | dict[str, Any]) -> PipelineRun:
 
 def pipeline_to_dict(pipeline: Pipeline) -> dict[str, Any]:
     """Pipeline → dict（可序列化为 YAML/JSON）。"""
-    return json.loads(pipeline.model_dump_json(by_alias=True, exclude_none=True))
+    dumped: dict[str, Any] = json.loads(pipeline.model_dump_json(by_alias=True, exclude_none=True))
+    return dumped
 
 
 def _assert_kind(data: dict[str, Any], expected: str) -> None:

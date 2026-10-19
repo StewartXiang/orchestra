@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -102,7 +103,7 @@ class StageExecutionMixin(PipelineWorkflowBase):
         wf_id = workflow.info().workflow_id
         stage_input = self._get_state(str(stage.input) if stage.input else "")
 
-        retry_kwargs: dict = {
+        retry_kwargs: dict[str, Any] = {
             "maximum_attempts": 3,
             "initial_interval": timedelta(seconds=10),
             "maximum_interval": timedelta(minutes=5),
@@ -172,7 +173,7 @@ class StageExecutionMixin(PipelineWorkflowBase):
         async def _run_one(
             agent_name: str, suffix: str = "", task_queue: str | None = None
         ) -> StageOutput:
-            kwargs: dict = {
+            kwargs: dict[str, Any] = {
                 "start_to_close_timeout": timeout,
                 "retry_policy": retry_policy,
             }
@@ -245,7 +246,7 @@ class StageExecutionMixin(PipelineWorkflowBase):
 
         if strategy == AggregateStrategy.MERGE:
             # 将各输出合并为 dict
-            merged: dict = {}
+            merged: dict[str, Any] = {}
             for r in successes:
                 if isinstance(r.output_value, dict):
                     merged.update(r.output_value)

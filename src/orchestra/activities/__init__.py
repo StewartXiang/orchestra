@@ -1,5 +1,8 @@
 """activities 模块公开 Activity 列表（Worker 注册用）。"""
 
+from collections.abc import Callable
+from typing import Any
+
 from .agent_resolver import (
     AgentResolveAllOutput,
     AgentResolveInput,
@@ -13,7 +16,7 @@ from .audit import AuditInput, write_audit_log
 from .compensation import CompensationInput, run_compensation
 from .notification import NotificationInput, send_notification
 
-ALL_ACTIVITIES = [
+ALL_ACTIVITIES: list[Callable[..., Any]] = [
     execute_agent_task,
     put_artifact,
     write_audit_log,

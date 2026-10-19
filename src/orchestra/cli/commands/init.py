@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import click
 import yaml
 
@@ -52,7 +54,7 @@ def init(out: str, non_interactive: bool) -> None:
         agents = ["agent-1"]
 
     # ── 生成 pipeline YAML ──
-    pipeline: dict = {
+    pipeline: dict[str, Any] = {
         "apiVersion": "orchestra.io/v1",
         "kind": "Pipeline",
         "metadata": {
@@ -88,7 +90,7 @@ def init(out: str, non_interactive: bool) -> None:
 
     # Stage 配置（线性链）
     for i, stage_name in enumerate(stage_names):
-        stage: dict = {
+        stage: dict[str, Any] = {
             "name": stage_name,
             "agent": agents[min(i, len(agents) - 1)],
             "output": f"$.{stage_name}",
@@ -111,7 +113,7 @@ def init(out: str, non_interactive: bool) -> None:
         yaml.dump(pipeline, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
     # values.yaml
-    values: dict = {"task": "你的第一个任务描述"}
+    values: dict[str, Any] = {"task": "你的第一个任务描述"}
     values_path = os.path.join(out_dir, "values.yaml")
     with open(values_path, "w") as f:
         yaml.dump(values, f, allow_unicode=True)

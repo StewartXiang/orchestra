@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from typing import Any
 
 import click
 import yaml
@@ -30,11 +31,11 @@ from ..output import click_echo, error
 def submit(
     ctx: click.Context,
     pipeline_file: str,
-    param: tuple,
+    param: tuple[str, ...],
     priority: str,
-    idempotency_key: str,
+    idempotency_key: str | None,
     do_dry_run: bool,
-    values_file: str,
+    values_file: str | None,
 ) -> None:
     """提交流水线（先校验，后提交）。提交前自动运行 validate。"""
     from orchestra.schema.parser import parse_pipeline
@@ -52,7 +53,7 @@ def submit(
         vals = {}
 
     # 命令行参数覆盖
-    params: dict = {**vals}
+    params: dict[str, Any] = {**vals}
     for p in param:
         k, _, v = p.partition("=")
         params[k.strip()] = v.strip()
@@ -83,7 +84,13 @@ def submit(
     asyncio.run(_submit(ctx, pipeline, params, priority, idempotency_key))
 
 
-async def _submit(ctx, pipeline, params: dict, priority: str, idempotency_key: str | None):
+async def _submit(
+    ctx: click.Context,
+    pipeline: Any,
+    params: dict[str, Any],
+    priority: str,
+    idempotency_key: str | None,
+) -> None:
     try:
         from orchestra.worker.registry import make_client
         from orchestra.workflows.pipeline_workflow import PipelineRunInput, PipelineWorkflow

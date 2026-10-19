@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from temporalio import activity
 
@@ -20,7 +21,7 @@ from ..observability.logging import get_logger
 logger = get_logger(__name__)
 
 # 单次 Activity 调用内的能力缓存（同一 Workflow 多次 resolve 复用）
-_cache: dict[str, dict] = {}
+_cache: dict[str, dict[str, Any]] = {}
 
 
 @dataclass
@@ -80,17 +81,17 @@ async def resolve_agent_by_selector(inp: AgentResolveInput) -> ResolvedAgent:
     adapter_names = list_adapter_names()
 
     if activity.is_cancelled():
-        from temporalio.exceptions import ActivityCancellationError
+        from temporalio.exceptions import CancelledError
 
-        raise ActivityCancellationError()
+        raise CancelledError()
 
     activity.heartbeat({"phase": "discovering", "adapters_total": len(adapter_names)})
 
     for idx, name in enumerate(adapter_names):
         if activity.is_cancelled():
-            from temporalio.exceptions import ActivityCancellationError
+            from temporalio.exceptions import CancelledError
 
-            raise ActivityCancellationError()
+            raise CancelledError()
 
         try:
             adapter = get_adapter(name)
@@ -212,13 +213,13 @@ async def resolve_all_matching_agents(inp: AgentResolveInput) -> AgentResolveAll
     adapter_names = list_adapter_names()
 
     if activity.is_cancelled():
-        from temporalio.exceptions import ActivityCancellationError
+        from temporalio.exceptions import CancelledError
 
-        raise ActivityCancellationError()
+        raise CancelledError()
 
     for idx, name in enumerate(adapter_names):
         if activity.is_cancelled():
-            raise ActivityCancellationError()
+            raise CancelledError()
 
         try:
             adapter = get_adapter(name)

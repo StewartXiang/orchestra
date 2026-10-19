@@ -214,8 +214,8 @@ def validate_pipeline(
     for stage in stages:
         if stage.condition:
             expr_errors = validate_expression(stage.condition)
-            for e in expr_errors:
-                report.add_error(f"stage '{stage.name}' condition: {e}")
+            for expr_err in expr_errors:
+                report.add_error(f"stage '{stage.name}' condition: {expr_err}")
 
     return report
 

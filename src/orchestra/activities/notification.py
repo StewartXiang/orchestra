@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 from temporalio import activity
@@ -19,11 +20,11 @@ class NotificationInput:
     message: str
     pipeline_id: str
     event: str  # "started" / "succeeded" / "failed" / "approval_pending"
-    extra: dict | None = None
+    extra: dict[str, Any] | None = None
 
 
 @activity.defn
-async def send_notification(inp: NotificationInput) -> dict:
+async def send_notification(inp: NotificationInput) -> dict[str, Any]:
     """发送通知（尽力而为，失败不重试）。"""
     activity.heartbeat({"phase": "notification", "channel": inp.channel})
 
@@ -38,7 +39,7 @@ async def send_notification(inp: NotificationInput) -> dict:
     return {"sent": False, "reason": f"unknown channel: {inp.channel}"}
 
 
-async def _send_feishu(inp: NotificationInput) -> dict:
+async def _send_feishu(inp: NotificationInput) -> dict[str, Any]:
     """飞书卡片通知（Webhook 模式）。"""
     import os
 
@@ -68,7 +69,7 @@ async def _send_feishu(inp: NotificationInput) -> dict:
         return {"sent": False, "reason": str(e)}
 
 
-async def _send_slack(inp: NotificationInput) -> dict:
+async def _send_slack(inp: NotificationInput) -> dict[str, Any]:
     import os
 
     webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "")

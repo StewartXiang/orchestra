@@ -125,7 +125,7 @@ async def make_client(
 
     # 构建 DataConverter（优先 Pydantic，回退默认）
     try:
-        from temporalio.contrib.pydantic import pydantic_data_converter  # type: ignore[import-untyped]
+        from temporalio.contrib.pydantic import pydantic_data_converter
 
         base_converter = pydantic_data_converter
     except ImportError:
@@ -136,7 +136,7 @@ async def make_client(
 
     # pydantic_data_converter 是 DataConverter 实例，通过取其类属性重建
     if base_converter is not DataConverter.default:
-        from temporalio.contrib.pydantic import PydanticPayloadConverter  # type: ignore[import-untyped]
+        from temporalio.contrib.pydantic import PydanticPayloadConverter
 
         converter = DataConverter(
             payload_converter_class=PydanticPayloadConverter,

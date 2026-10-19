@@ -88,7 +88,7 @@ def _eval_with_cel(expression: str, state: dict[str, Any]) -> bool:
     ``and`` / ``or`` / ``not``，故编译前先归一化（跳过字符串字面量内部）。
     """
     try:
-        import celpy  # type: ignore[import-untyped]
+        import celpy
         import celpy.celtypes as ct
     except ImportError:
         raise
@@ -222,7 +222,7 @@ _ALLOWED_NAMES = {"True", "False", "None", "true", "false", "null", "size", "mat
 def _eval_with_fallback(expression: str, state: dict[str, Any]) -> bool:
     """simpleeval 白名单求值（CEL 不可用时回退）。"""
     try:
-        from simpleeval import EvalWithCompoundTypes, FeatureNotAvailable  # type: ignore[import-untyped]
+        from simpleeval import EvalWithCompoundTypes, FeatureNotAvailable  # type: ignore[import-not-found]
     except ImportError:
         return _eval_pure_python(expression, state)
 

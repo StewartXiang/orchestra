@@ -21,7 +21,7 @@ try:
 except ImportError:
     _YAML = False
 
-console = Console() if _RICH else None  # type: ignore[assignment]
+console = Console() if _RICH else None
 
 
 def print_json(data: Any) -> None:
