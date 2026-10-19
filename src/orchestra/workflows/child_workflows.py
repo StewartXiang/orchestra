@@ -14,7 +14,6 @@ from __future__ import annotations
 from typing import Any
 
 from temporalio import workflow
-from temporalio.common import RetryPolicy
 
 
 @workflow.defn

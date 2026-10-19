@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any, Generator
+from typing import Any
 
 
 def init_tracing(service_name: str = "orchestra-worker", otlp_endpoint: str | None = None) -> None:
@@ -18,7 +19,10 @@ def init_tracing(service_name: str = "orchestra-worker", otlp_endpoint: str | No
         provider = TracerProvider(resource=resource)
         if otlp_endpoint:
             from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter  # type: ignore[import-untyped]
-            provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True)))
+
+            provider.add_span_processor(
+                BatchSpanProcessor(OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True))
+            )
         trace.set_tracer_provider(provider)
     except ImportError:
         pass
@@ -26,8 +30,8 @@ def init_tracing(service_name: str = "orchestra-worker", otlp_endpoint: str | No
 
 def inject_context(carrier: dict[str, str]) -> None:
     try:
-        from opentelemetry.propagators.textmap import DefaultSetter  # type: ignore[import-untyped]
         from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
         TraceContextTextMapPropagator().inject(carrier)
     except ImportError:
         pass
@@ -36,6 +40,7 @@ def inject_context(carrier: dict[str, str]) -> None:
 def extract_context(carrier: dict[str, str]) -> Any:
     try:
         from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
         return TraceContextTextMapPropagator().extract(carrier)
     except ImportError:
         return None
@@ -50,11 +55,16 @@ def carrier_from_traceparent(traceparent: str | None) -> dict[str, str]:
 
 
 @contextmanager
-def span(name: str, attributes: dict[str, Any] | None = None, parent_carrier: dict[str, str] | None = None) -> Generator[Any, None, None]:
+def span(
+    name: str,
+    attributes: dict[str, Any] | None = None,
+    parent_carrier: dict[str, str] | None = None,
+) -> Generator[Any, None, None]:
     """OTel span。OTel 不可用时返回 no-op。"""
     try:
         from opentelemetry import trace
         from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
         ctx = TraceContextTextMapPropagator().extract(parent_carrier) if parent_carrier else None
         with trace.get_tracer("orchestra").start_as_current_span(name, context=ctx) as s:
             if attributes:

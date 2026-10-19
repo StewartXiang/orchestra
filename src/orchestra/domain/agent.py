@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
@@ -20,10 +19,11 @@ DnsName = Annotated[str, Field(pattern=r"^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$")]
 
 class ResourceQuantities(BaseModel):
     """对标 K8s ResourceRequirements。``tokensPerMinute`` 用于 LLM 令牌桶限流。"""
+
     model_config = ConfigDict(extra="forbid")
 
     memory: str | None = None  # "2Gi"
-    cpu: str | None = None      # "500m" / "2"
+    cpu: str | None = None  # "500m" / "2"
     tokensPerMinute: int | None = Field(default=None, ge=0)
 
 
@@ -36,6 +36,7 @@ class Resources(BaseModel):
 
 class Probe(BaseModel):
     """startup / readiness 探针。"""
+
     model_config = ConfigDict(extra="forbid")
 
     endpoint: str | None = None
@@ -47,6 +48,7 @@ class Probe(BaseModel):
 
 class LivenessProbe(BaseModel):
     """liveness 探针：基于 Activity 心跳。"""
+
     model_config = ConfigDict(extra="forbid")
 
     heartbeatInterval: DurationStr = "15s"
@@ -55,6 +57,7 @@ class LivenessProbe(BaseModel):
 
 class RetryPolicy(BaseModel):
     """对齐 Temporal RetryPolicy。"""
+
     model_config = ConfigDict(extra="forbid")
 
     maxAttempts: int = Field(default=3, ge=1)
@@ -67,6 +70,7 @@ class RetryPolicy(BaseModel):
 
 class AgentSelector(BaseModel):
     """按 role + capabilities 路由到 profile。"""
+
     model_config = ConfigDict(extra="forbid")
 
     role: Role | None = None
@@ -75,6 +79,7 @@ class AgentSelector(BaseModel):
 
 class AgentSpec(BaseModel):
     """Pipeline.spec.agents.<name> — 流水线内对 Agent 的声明。"""
+
     model_config = ConfigDict(extra="forbid")
 
     role: Role
@@ -94,6 +99,7 @@ class AgentSpec(BaseModel):
 
 class Profile(BaseModel):
     """config/profiles.yaml 中的具体 Agent 实例。"""
+
     model_config = ConfigDict(extra="forbid")
 
     name: DnsName
@@ -110,6 +116,7 @@ class Profile(BaseModel):
 
 class AgentCapabilities(BaseModel):
     """Adapter ``get_capabilities()`` 返回值。"""
+
     model_config = ConfigDict(extra="forbid")
 
     role: Role
@@ -121,6 +128,7 @@ class AgentCapabilities(BaseModel):
 
 class AgentMetrics(BaseModel):
     """Adapter ``get_metrics()`` 返回值。"""
+
     model_config = ConfigDict(extra="forbid")
 
     busy_slots: int = 0
@@ -131,6 +139,7 @@ class AgentMetrics(BaseModel):
 
 class AgentHealth(BaseModel):
     """Adapter ``check_health()`` 返回值。"""
+
     model_config = ConfigDict(extra="forbid")
 
     status: HealthStatus

@@ -26,7 +26,9 @@ from ..domain.pipeline import Pipeline, PipelineRun
 
 def load_yaml(source: str | Path) -> dict[str, Any]:
     """从文件路径或 YAML 字符串加载为 dict。"""
-    if isinstance(source, Path) or (isinstance(source, str) and "\n" not in source and Path(source).exists()):
+    if isinstance(source, Path) or (
+        isinstance(source, str) and "\n" not in source and Path(source).exists()
+    ):
         text = Path(source).read_text(encoding="utf-8")
     else:
         text = source
@@ -63,7 +65,8 @@ def parse_pipeline_run(source: str | Path | dict[str, Any]) -> PipelineRun:
         return PipelineRun.model_validate(data)
     except ValidationError as e:
         raise InvalidInput(
-            f"PipelineRun schema 校验失败：{_fmt_validation_errors(e)}", details={"errors": e.errors()}
+            f"PipelineRun schema 校验失败：{_fmt_validation_errors(e)}",
+            details={"errors": e.errors()},
         ) from e
 
 
@@ -75,9 +78,7 @@ def pipeline_to_dict(pipeline: Pipeline) -> dict[str, Any]:
 def _assert_kind(data: dict[str, Any], expected: str) -> None:
     kind = data.get("kind")
     if kind != expected:
-        raise ConfigurationError(
-            f"期望 kind={expected!r}，得到 {kind!r}"
-        )
+        raise ConfigurationError(f"期望 kind={expected!r}，得到 {kind!r}")
 
 
 def _fmt_validation_errors(e: ValidationError) -> str:

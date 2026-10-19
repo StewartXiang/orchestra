@@ -30,6 +30,7 @@ class AuditInput:
 async def write_audit_log(inp: AuditInput) -> None:
     """写入审计日志（尽力而为，不阻塞流水线主流程）。"""
     import json
+
     activity.heartbeat({"phase": "audit", "action": inp.action})
 
     event = AuditEvent(

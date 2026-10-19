@@ -17,11 +17,14 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
-import sys
+from typing import TYPE_CHECKING
 
 import httpx
 
 from ..observability.logging import get_logger
+
+if TYPE_CHECKING:
+    import temporalio.worker
 
 logger = get_logger(__name__)
 
@@ -63,7 +66,12 @@ async def startup_probe(mcp_endpoint: str, *, timeout: float = 10.0) -> bool:
                         return True
                     # 404/405 说明服务可达只是端点不存在，也算健康
                     if resp.status_code in (404, 405):
-                        logger.info("startup_probe_reachable", endpoint=mcp_endpoint, path=path, status=resp.status_code)
+                        logger.info(
+                            "startup_probe_reachable",
+                            endpoint=mcp_endpoint,
+                            path=path,
+                            status=resp.status_code,
+                        )
                         return True
                 except httpx.HTTPError:
                     continue
@@ -75,12 +83,12 @@ async def startup_probe(mcp_endpoint: str, *, timeout: float = 10.0) -> bool:
         return False
 
 
-async def wait_for_shutdown(worker: "temporalio.worker.Worker") -> None:
+async def wait_for_shutdown(worker: temporalio.worker.Worker) -> None:
     """等待关闭信号，然后优雅停止 Worker。"""
     await _SHUTDOWN_EVENT.wait()
     logger.info("graceful_shutdown_started", timeout=_GRACEFUL_SHUTDOWN_TIMEOUT)
     try:
         await asyncio.wait_for(worker.shutdown(), timeout=_GRACEFUL_SHUTDOWN_TIMEOUT)
         logger.info("graceful_shutdown_completed")
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("graceful_shutdown_timeout", timeout=_GRACEFUL_SHUTDOWN_TIMEOUT)

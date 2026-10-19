@@ -16,7 +16,6 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
-import os
 import shutil
 import tarfile
 import time
@@ -169,6 +168,7 @@ def get_artifact_store() -> LocalArtifactStore:
 
 # ---------- 工具函数 ----------
 
+
 def _sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -192,14 +192,17 @@ def _sha256_dir(path: Path) -> tuple[str, int]:
 
 def _write_manifest(dest_dir: Path, manifest: ArtifactManifest) -> None:
     (dest_dir / "manifest.json").write_text(
-        json.dumps({
-            "name": manifest.name,
-            "path": manifest.path,
-            "sha256": manifest.sha256,
-            "size": manifest.size,
-            "created_at": manifest.created_at,
-            "retention_seconds": manifest.retention_seconds,
-            "compressed": manifest.compressed,
-            "storage": manifest.storage,
-        }, indent=2)
+        json.dumps(
+            {
+                "name": manifest.name,
+                "path": manifest.path,
+                "sha256": manifest.sha256,
+                "size": manifest.size,
+                "created_at": manifest.created_at,
+                "retention_seconds": manifest.retention_seconds,
+                "compressed": manifest.compressed,
+                "storage": manifest.storage,
+            },
+            indent=2,
+        )
     )

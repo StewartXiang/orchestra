@@ -1,4 +1,5 @@
 """orchestra init — 交互式生成 Pipeline + Profiles 配置。"""
+
 from __future__ import annotations
 
 import click
@@ -8,8 +9,9 @@ from ..output import click_echo
 
 
 @click.command()
-@click.option("--out", "-o", default=".", type=click.Path(file_okay=False),
-              help="输出目录（默认当前目录）")
+@click.option(
+    "--out", "-o", default=".", type=click.Path(file_okay=False), help="输出目录（默认当前目录）"
+)
 @click.option("--non-interactive", is_flag=True, help="非交互模式（使用默认值）")
 def init(out: str, non_interactive: bool) -> None:
     """交互式初始化项目配置。
@@ -64,8 +66,7 @@ def init(out: str, non_interactive: bool) -> None:
             "agents": {},
             "pipeline": {"stages": []},
             "parameters": [
-                {"name": "task", "type": "string", "required": True,
-                 "description": "任务描述"},
+                {"name": "task", "type": "string", "required": True, "description": "任务描述"},
             ],
             "global": {
                 "heartbeatInterval": "15s",
@@ -101,6 +102,7 @@ def init(out: str, non_interactive: bool) -> None:
 
     # ── 写入文件 ──
     import os
+
     out_dir = os.path.abspath(out)
     os.makedirs(out_dir, exist_ok=True)
 

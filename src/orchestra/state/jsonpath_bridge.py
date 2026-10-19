@@ -4,6 +4,6 @@ state/ 不能直接 import schema/（schema 依赖 domain，state 是同级）�
 通过此模块重导出 jsonpath 函数，保持分层清晰。
 """
 
-from ..schema.jsonpath import get_value, set_value, parse_path
+from ..schema.jsonpath import get_value, parse_path, set_value
 
-__all__ = ["get_value", "set_value", "parse_path"]
+__all__ = ["get_value", "parse_path", "set_value"]

@@ -1,7 +1,11 @@
 """orchestra validate — 静态校验 pipeline.yaml"""
+
 from __future__ import annotations
+
 import click
-from ..output import click_echo, error, print_output
+
+from ..output import click_echo, error
+
 
 @click.command()
 @click.argument("pipeline_file", type=click.Path(exists=True))
@@ -9,6 +13,7 @@ from ..output import click_echo, error, print_output
 def validate(ctx: click.Context, pipeline_file: str) -> None:
     """静态校验 pipeline.yaml（JSON Schema + DAG + 引用完整性）。"""
     import yaml
+
     from orchestra.schema.parser import parse_pipeline
     from orchestra.schema.validator import validate_pipeline
 
@@ -18,7 +23,8 @@ def validate(ctx: click.Context, pipeline_file: str) -> None:
     try:
         parse_pipeline(data)
     except Exception as e:
-        error(str(e)); raise SystemExit(1)
+        error(str(e))
+        raise SystemExit(1) from e
 
     report = validate_pipeline(data)
     if report.valid:

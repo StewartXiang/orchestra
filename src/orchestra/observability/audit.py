@@ -16,10 +16,9 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
-import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +26,7 @@ from typing import Any
 @dataclass
 class AuditEvent:
     """审计事件（来自 design.md "审计设计"）。"""
+
     actor: str
     action: str
     resource: str
@@ -36,7 +36,7 @@ class AuditEvent:
     user_agent: str | None = None
     diff_json: str | None = None
     audit_id: str = field(default_factory=lambda: f"audit-{uuid.uuid4().hex[:12]}")
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -82,19 +82,22 @@ class AuditWriter:
 
     def write(self, event: AuditEvent) -> None:
         conn = self._get_conn()
-        conn.execute(_INSERT_SQL, (
-            event.audit_id,
-            event.timestamp,
-            event.actor,
-            event.action,
-            event.resource,
-            event.version,
-            event.result,
-            event.ip_address,
-            event.user_agent,
-            event.diff_json,
-            json.dumps(event.extra) if event.extra else None,
-        ))
+        conn.execute(
+            _INSERT_SQL,
+            (
+                event.audit_id,
+                event.timestamp,
+                event.actor,
+                event.action,
+                event.resource,
+                event.version,
+                event.result,
+                event.ip_address,
+                event.user_agent,
+                event.diff_json,
+                json.dumps(event.extra) if event.extra else None,
+            ),
+        )
         conn.commit()
 
     async def write_async(self, event: AuditEvent) -> None:

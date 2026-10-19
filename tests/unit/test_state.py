@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -13,12 +11,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from orchestra.domain.errors import SchemaViolation
-from orchestra.domain.state import ArtifactReference, StageOutput
+from orchestra.domain.state import StageOutput
 from orchestra.state.idempotency import SQLiteIdempotencyStore
 from orchestra.state.store import StateStore
 
-
 # ── StateStore ───────────────────────────────
+
 
 def test_state_merge_output():
     store = StateStore(initial_params={"task": "hello"})
@@ -62,8 +60,12 @@ def test_state_snapshot_roundtrip():
     store = StateStore(initial_params={"x": 1})
     store.register_stage_output("code", "$.code.result")
     out = StageOutput(
-        stage_name="code", success=True, output_path="$.code.result", output_value=42,
-        started_at_iso="2026-01-01T00:00:00Z", completed_at_iso="2026-01-01T00:01:00Z",
+        stage_name="code",
+        success=True,
+        output_path="$.code.result",
+        output_value=42,
+        started_at_iso="2026-01-01T00:00:00Z",
+        completed_at_iso="2026-01-01T00:01:00Z",
     )
     store.merge_stage_output(out)
     snap = store.snapshot()
@@ -78,6 +80,7 @@ def test_state_size():
 
 
 # ── Idempotency ─────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_sqlite_get_put(tmp_path):
@@ -98,7 +101,6 @@ async def test_sqlite_miss(tmp_path):
 
 @pytest.mark.asyncio
 async def test_sqlite_ttl_expired(tmp_path):
-    import time
     store = SQLiteIdempotencyStore(tmp_path / "idem.db")
     # TTL = 0 → 立即过期
     await store.put("k-expire", {"v": "old"}, ttl_seconds=0)
@@ -120,6 +122,7 @@ async def test_sqlite_overwrite(tmp_path):
 
 
 # ── ArtifactStore ────────────────────────────
+
 
 def test_artifact_put_file(tmp_path):
     from orchestra.state.artifact_store import LocalArtifactStore

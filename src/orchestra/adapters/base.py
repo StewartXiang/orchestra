@@ -8,8 +8,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import timedelta
-from typing import Any, Callable, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from ..domain.agent import AgentCapabilities, AgentHealth, AgentMetrics
 from ..domain.state import Checkpoint, ProgressInfo, TaskInput, TaskOutput

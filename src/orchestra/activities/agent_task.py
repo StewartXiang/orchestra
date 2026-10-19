@@ -13,6 +13,7 @@ Stage 缓存（跨 Run 复用 LLM 结果）：
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import time
@@ -21,7 +22,6 @@ from dataclasses import dataclass
 from temporalio import activity
 
 from ..adapters.registry import get_adapter
-from ..domain.errors import OrchestraError
 from ..domain.state import Checkpoint, ProgressInfo, StageOutput, TaskInput, TaskOutput
 from ..observability.logging import get_logger
 from ..observability.metrics import (
@@ -41,10 +41,10 @@ class AgentTaskInput:
     task: TaskInput
     stage_name: str
     pipeline_name: str
-    cache_enabled: bool = False    # stage.cache.enabled
+    cache_enabled: bool = False  # stage.cache.enabled
     cache_ttl_seconds: int = 86400  # 默认 24h
-    input_schema: dict | None = None       # JSON Schema for input validation
-    output_schema: dict | None = None      # JSON Schema for output validation
+    input_schema: dict | None = None  # JSON Schema for input validation
+    output_schema: dict | None = None  # JSON Schema for output validation
     schema_violation_policy: str = "fail"  # "fail" | "warn"
 
 
@@ -84,8 +84,9 @@ async def execute_agent_task(inp: AgentTaskInput) -> StageOutput:
 
     # ③-bis 输入 Schema 校验（在调 Agent 前）
     if inp.input_schema and task.input is not None:
-        _validate_schema(task.input, inp.input_schema, inp.stage_name,
-                         "input", inp.schema_violation_policy)
+        _validate_schema(
+            task.input, inp.input_schema, inp.stage_name, "input", inp.schema_violation_policy
+        )
 
     # 获取适配器
     adapter = get_adapter(task.agent_name)
@@ -108,18 +109,22 @@ async def execute_agent_task(inp: AgentTaskInput) -> StageOutput:
 
     # 心跳回调（传给 adapter）
     def on_heartbeat(progress: ProgressInfo) -> None:
-        activity.heartbeat({
-            "phase": progress.phase,
-            "stage": progress.stage,
-            "progress": progress.progress,
-            "eta": progress.eta_seconds,
-            "checkpoint": {
-                "step": progress.current_step or "",
+        activity.heartbeat(
+            {
+                "phase": progress.phase,
+                "stage": progress.stage,
                 "progress": progress.progress,
-                "data": progress.checkpoint.data if progress.checkpoint else {},
-            } if progress.checkpoint or progress.current_step else None,
-            "attempt": info.attempt,
-        })
+                "eta": progress.eta_seconds,
+                "checkpoint": {
+                    "step": progress.current_step or "",
+                    "progress": progress.progress,
+                    "data": progress.checkpoint.data if progress.checkpoint else {},
+                }
+                if progress.checkpoint or progress.current_step
+                else None,
+                "attempt": info.attempt,
+            }
+        )
 
     # ③ 执行（含取消检查）
     parent_carrier = carrier_from_traceparent(task.traceparent)
@@ -163,8 +168,9 @@ async def execute_agent_task(inp: AgentTaskInput) -> StageOutput:
 
     # ③-quater 输出 Schema 校验（在调 Agent 后）
     if inp.output_schema and output and output.output is not None:
-        _validate_schema(output.output, inp.output_schema, inp.stage_name,
-                         "output", inp.schema_violation_policy)
+        _validate_schema(
+            output.output, inp.output_schema, inp.stage_name, "output", inp.schema_violation_policy
+        )
 
     completed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     result = StageOutput(
@@ -214,18 +220,21 @@ def _extract_structured_output(
             calls = raw[tool_key]
             if isinstance(calls, list):
                 for call in calls:
-                    if isinstance(call, dict):
-                        if call.get("name") == "submit_result" or call.get("function", {}).get("name") == "submit_result":
-                            args = call.get("arguments") or call.get("function", {}).get("arguments")
-                            if isinstance(args, str):
-                                import json
-                                try:
-                                    args = json.loads(args)
-                                except json.JSONDecodeError:
-                                    pass
-                            if isinstance(args, dict):
-                                logger.info("extracted_tool_call", stage=stage_name, tool="submit_result")
-                                return args
+                    if isinstance(call, dict) and (
+                        call.get("name") == "submit_result"
+                        or call.get("function", {}).get("name") == "submit_result"
+                    ):
+                        args = call.get("arguments") or call.get("function", {}).get("arguments")
+                        if isinstance(args, str):
+                            import json
+
+                            with contextlib.suppress(json.JSONDecodeError):
+                                args = json.loads(args)
+                        if isinstance(args, dict):
+                            logger.info(
+                                "extracted_tool_call", stage=stage_name, tool="submit_result"
+                            )
+                            return args
             break  # 只检查第一层 tool_calls
 
     # 格式 2: 顶层直接是 submit_result
@@ -233,10 +242,9 @@ def _extract_structured_output(
         args = raw.get("arguments") or raw.get("parameters") or raw.get("input") or {}
         if isinstance(args, str):
             import json
-            try:
+
+            with contextlib.suppress(json.JSONDecodeError):
                 args = json.loads(args)
-            except json.JSONDecodeError:
-                pass
         if isinstance(args, dict):
             logger.info("extracted_tool_call", stage=stage_name, tool="submit_result")
             return args
@@ -249,10 +257,9 @@ def _extract_structured_output(
                 args = inner.get("arguments") or inner.get("parameters") or {}
                 if isinstance(args, str):
                     import json
-                    try:
+
+                    with contextlib.suppress(json.JSONDecodeError):
                         args = json.loads(args)
-                    except json.JSONDecodeError:
-                        pass
                 if isinstance(args, dict):
                     logger.info("extracted_tool_call", stage=stage_name, tool="submit_result")
                     return args
@@ -263,12 +270,13 @@ def _extract_structured_output(
 
 # ---------- Schema 校验辅助 ----------
 
+
 def _validate_schema(
     data: object,
     schema: dict,
     stage_name: str,
     direction: str,  # "input" | "output"
-    policy: str,    # "fail" | "warn"
+    policy: str,  # "fail" | "warn"
 ) -> None:
     """用 JSON Schema 校验数据。"""
     import jsonschema
@@ -279,6 +287,7 @@ def _validate_schema(
         msg = f"stage '{stage_name}' {direction} schema 校验失败: {e.message}"
         if policy == "fail":
             from ..domain.errors import SchemaViolation
-            raise SchemaViolation(msg)
+
+            raise SchemaViolation(msg) from e
         else:
             logger.warning("schema_violation", stage=stage_name, direction=direction, error=str(e))

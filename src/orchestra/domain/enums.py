@@ -13,6 +13,7 @@ from enum import Enum
 
 class Phase(str, Enum):
     """PipelineRun 生命周期阶段。"""
+
     PENDING = "Pending"
     RUNNING = "Running"
     PAUSED = "Paused"
@@ -26,6 +27,7 @@ class Phase(str, Enum):
 
 class StagePhase(str, Enum):
     """单个 Stage 的阶段。"""
+
     PENDING = "Pending"
     RUNNING = "Running"
     SUCCEEDED = "Succeeded"
@@ -36,6 +38,7 @@ class StagePhase(str, Enum):
 
 class Role(str, Enum):
     """Agent 逻辑角色。新增需先在 config/capabilities.yaml roles: 词表声明。"""
+
     DEVELOPER = "developer"
     TESTER = "tester"
     DESIGNER = "designer"
@@ -46,6 +49,7 @@ class Role(str, Enum):
 
 class Priority(str, Enum):
     """流水线 / Stage 优先级。"""
+
     LOW = "low"
     NORMAL = "normal"
     HIGH = "high"
@@ -54,6 +58,7 @@ class Priority(str, Enum):
 
 class BackoffKind(str, Enum):
     """重试退避算法。"""
+
     FIXED = "fixed"
     LINEAR = "linear"
     EXPONENTIAL = "exponential"
@@ -61,6 +66,7 @@ class BackoffKind(str, Enum):
 
 class AggregateStrategy(str, Enum):
     """并行 Stage 结果聚合策略。详见 design.md "并行执行与聚合"。"""
+
     ALL = "all"
     ANY = "any"
     FIRST = "first"
@@ -71,6 +77,7 @@ class AggregateStrategy(str, Enum):
 
 class OnFailure(str, Enum):
     """Stage 失败时的下一步动作。"""
+
     CONTINUE = "continue"
     FAIL = "fail"
     COMPENSATE = "compensate"
@@ -78,6 +85,7 @@ class OnFailure(str, Enum):
 
 class OutputStorage(str, Enum):
     """Stage 输出存储策略。"""
+
     INLINE = "inline"
     REFERENCE = "reference"
     OSS = "oss"
@@ -85,6 +93,7 @@ class OutputStorage(str, Enum):
 
 class StorageClass(str, Enum):
     """Artifact 存储后端。"""
+
     LOCAL = "local"
     S3 = "s3"
     OSS = "oss"
@@ -110,6 +119,7 @@ class OnTimeout(str, Enum):
 
 class ParentClosePolicy(str, Enum):
     """子 Workflow 在父结束时的行为。"""
+
     TERMINATE = "TERMINATE"
     ABANDON = "ABANDON"
     REQUEST_CANCEL = "REQUEST_CANCEL"
@@ -117,6 +127,7 @@ class ParentClosePolicy(str, Enum):
 
 class SideEffect(str, Enum):
     """Stage 声明的副作用类别，影响重跑风险评估。"""
+
     GIT = "git"
     FS = "fs"
     DEPLOY = "deploy"
@@ -126,6 +137,7 @@ class SideEffect(str, Enum):
 
 class TriggerKind(str, Enum):
     """PipelineRun 触发方式。"""
+
     MANUAL = "manual"
     SCHEDULE = "schedule"
     WEBHOOK = "webhook"
@@ -149,6 +161,7 @@ class NotificationEvent(str, Enum):
 
 class HealthStatus(str, Enum):
     """Agent 健康状态。"""
+
     READY = "READY"
     NOT_READY = "NOT_READY"
     STARTING = "STARTING"
@@ -157,6 +170,7 @@ class HealthStatus(str, Enum):
 
 class AgentStatus(str, Enum):
     """Agent 运行时状态。"""
+
     IDLE = "IDLE"
     WORKING = "WORKING"
     ERROR = "ERROR"

@@ -6,12 +6,10 @@
 
 from __future__ import annotations
 
-import asyncio
-import os
 import sys
-import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import ClassVar
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -20,16 +18,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from orchestra.adapters.mock import MockAgentAdapter, MockBehavior
 from orchestra.domain.state import TaskInput
 
-
 # ──────────────────────────────────────────────
 # Mock Temporal activity context
 # ──────────────────────────────────────────────
+
 
 class _FakeActivityInfo:
     workflow_id = "wf-test-123"
     activity_id = "act-001"
     attempt = 1
-    heartbeat_details = []
+    heartbeat_details: ClassVar[list] = []
 
 
 def _mock_activity_ctx():
@@ -57,14 +55,16 @@ def _make_task(agent_name: str = "walnut") -> TaskInput:
 # Tests
 # ──────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_execute_agent_task_success(tmp_path):
     """正常执行：返回 StageOutput(success=True)。"""
     from orchestra.activities.agent_task import AgentTaskInput, execute_agent_task
-    from orchestra.state.idempotency import init_store, SQLiteIdempotencyStore
+    from orchestra.state.idempotency import init_store
 
     init_store("sqlite", db_path=str(tmp_path / "idempotency.db"))
     from orchestra.adapters import registry as reg
+
     adapter = MockAgentAdapter("walnut", output={"patch": "diff"})
     reg._REGISTRY["walnut"] = adapter
 
@@ -90,6 +90,7 @@ async def test_execute_agent_task_idempotent(tmp_path):
     init_store("sqlite", db_path=db)
 
     from orchestra.adapters import registry as reg
+
     adapter = MockAgentAdapter("walnut", output={"patch": "cached"})
     reg._REGISTRY["walnut"] = adapter
 
@@ -114,6 +115,7 @@ async def test_execute_agent_task_failure(tmp_path):
     init_store("sqlite", db_path=str(tmp_path / "idempotency.db"))
 
     from orchestra.adapters import registry as reg
+
     adapter = MockAgentAdapter("walnut", behavior=MockBehavior.FAIL, error_message="boom")
     reg._REGISTRY["walnut"] = adapter
 
@@ -134,6 +136,7 @@ async def test_heartbeat_called(tmp_path):
     init_store("sqlite", db_path=str(tmp_path / "idempotency2.db"))
 
     from orchestra.adapters import registry as reg
+
     adapter = MockAgentAdapter("walnut", output={"result": "ok"})
     reg._REGISTRY["walnut"] = adapter
 

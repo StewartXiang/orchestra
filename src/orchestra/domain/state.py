@@ -13,21 +13,23 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class ArtifactReference(BaseModel):
     """大对象在 State 中的指针（output.storage = reference / oss）。"""
+
     model_config = ConfigDict(extra="forbid")
 
-    path: str               # 本地路径或 OSS URL
+    path: str  # 本地路径或 OSS URL
     sha256: str
     size: int = Field(ge=0)
-    storage: str            # "local" / "oss" / "s3"
+    storage: str  # "local" / "oss" / "s3"
     bucket: str | None = None
     ttl_seconds: int | None = None
 
 
 class Checkpoint(BaseModel):
     """长 Activity 心跳中携带的检查点，用于失败重试时断点续传。"""
+
     model_config = ConfigDict(extra="forbid")
 
-    step: str               # 业务步骤标识（如 "compiling" / "tested" / "ui_verified"）
+    step: str  # 业务步骤标识（如 "compiling" / "tested" / "ui_verified"）
     progress: float = Field(ge=0.0, le=100.0)
     data: dict[str, Any] = Field(default_factory=dict)
     written_at_iso: str | None = None
@@ -35,10 +37,11 @@ class Checkpoint(BaseModel):
 
 class ProgressInfo(BaseModel):
     """Activity 心跳载荷。供 CLI ``status --watch`` 显示。"""
+
     model_config = ConfigDict(extra="forbid")
 
     stage: str
-    phase: str              # "started" / "running" / "completing"
+    phase: str  # "started" / "running" / "completing"
     progress: float = Field(ge=0.0, le=100.0)
     eta_seconds: float | None = None
     current_step: str | None = None
@@ -55,6 +58,7 @@ class WorkflowState(BaseModel):
 
     Stage 仅能写自己 ``output.path`` 指向的子树；引擎在 Stage 完成时校验。
     """
+
     model_config = ConfigDict(extra="allow")
 
     params: dict[str, Any] = Field(default_factory=dict)
@@ -62,11 +66,12 @@ class WorkflowState(BaseModel):
 
 class StageOutput(BaseModel):
     """Activity 返回给 Workflow 的标准包装。"""
+
     model_config = ConfigDict(extra="forbid")
 
     stage_name: str
     success: bool
-    output_path: str        # JSONPath，如 "$.code.patch"
+    output_path: str  # JSONPath，如 "$.code.patch"
     output_value: Any | ArtifactReference | None = None
     error_code: str | None = None
     error_message: str | None = None
@@ -79,6 +84,7 @@ class StageOutput(BaseModel):
 
 class TaskInput(BaseModel):
     """Adapter ``execute_task`` 入参：Activity 派发给 Agent 时的载荷。"""
+
     model_config = ConfigDict(extra="forbid")
 
     workflow_id: str
@@ -86,19 +92,20 @@ class TaskInput(BaseModel):
     agent_name: str
     role: str
     tools: list[str]
-    input: Any                            # 由 Workflow 按 stage.input JSONPath 提取
+    input: Any  # 由 Workflow 按 stage.input JSONPath 提取
     idempotency_key: str
     deadline_iso: str | None = None
-    traceparent: str | None = None        # OTel 上下文传播
-    output_schema: dict | None = None     # 期望的输出 JSON Schema（传给 agent 约束格式）
-    prompt: str | None = None             # Stage 级 prompt 注入（模板展开后）
+    traceparent: str | None = None  # OTel 上下文传播
+    output_schema: dict | None = None  # 期望的输出 JSON Schema（传给 agent 约束格式）
+    prompt: str | None = None  # Stage 级 prompt 注入（模板展开后）
 
 
 class TaskOutput(BaseModel):
     """Adapter ``execute_task`` 返回值。"""
+
     model_config = ConfigDict(extra="forbid")
 
-    output: Any                           # 由 Workflow 按 stage.output 写入 State
+    output: Any  # 由 Workflow 按 stage.output 写入 State
     tokens_consumed: int = 0
     cost_usd: float = 0.0
     duration_seconds: float = 0.0

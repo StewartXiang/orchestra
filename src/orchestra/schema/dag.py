@@ -7,8 +7,8 @@ ValidationResult 或 list[str]（错误消息）。
 from __future__ import annotations
 
 from collections import defaultdict, deque
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Sequence
 
 from ..domain.pipeline import Pipeline, Stage
 
@@ -16,6 +16,7 @@ from ..domain.pipeline import Pipeline, Stage
 @dataclass
 class DagValidationResult:
     """DAG 静态分析结果。``errors`` 非空则 pipeline 不可提交。"""
+
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     topo_order: list[str] = field(default_factory=list)  # 执行顺序
@@ -25,7 +26,9 @@ class DagValidationResult:
         return len(self.errors) == 0
 
 
-def validate_dag(pipeline: Pipeline, visited_names: frozenset[str] | None = None) -> DagValidationResult:
+def validate_dag(
+    pipeline: Pipeline, visited_names: frozenset[str] | None = None
+) -> DagValidationResult:
     """全量 DAG 校验入口。
 
     :param visited_names: 递归检测子流水线时传入已访问的 pipeline 名称集合。
@@ -60,9 +63,7 @@ def validate_dag(pipeline: Pipeline, visited_names: frozenset[str] | None = None
             continue
         # 没有依赖也没有被依赖 → 只有一个 stage 时是合法的起点
         if len(stages) > 1:
-            result.warnings.append(
-                f"stage '{stage.name}' 看起来是孤儿节点（无依赖且无后继）"
-            )
+            result.warnings.append(f"stage '{stage.name}' 看起来是孤儿节点（无依赖且无后继）")
 
     # 4. loop.body 引用的 stage 名必须存在
     for stage in stages:
@@ -81,9 +82,7 @@ def validate_dag(pipeline: Pipeline, visited_names: frozenset[str] | None = None
         if stage.childWorkflow:
             child_name = stage.childWorkflow.name
             if child_name in visited:
-                result.errors.append(
-                    f"stage '{stage.name}': 检测到子流水线递归引用 '{child_name}'"
-                )
+                result.errors.append(f"stage '{stage.name}': 检测到子流水线递归引用 '{child_name}'")
 
     return result
 
@@ -131,7 +130,7 @@ def parallel_groups(stages: Sequence[Stage]) -> list[list[str]]:
 
     同一波次内的 stage 之间没有依赖关系，可以并发执行。
     """
-    name_to_stage = {s.name: s for s in stages}
+    {s.name: s for s in stages}
     in_degree: dict[str, int] = {s.name: 0 for s in stages}
     graph: dict[str, list[str]] = defaultdict(list)
 

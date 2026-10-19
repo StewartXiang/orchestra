@@ -45,7 +45,9 @@ def test_dry_run_minimal(runner):
 
 
 def test_dry_run_mermaid(runner):
-    result = runner.invoke(main, ["dry-run", "examples/minimal.pipeline.yaml", "--output", "mermaid"])
+    result = runner.invoke(
+        main, ["dry-run", "examples/minimal.pipeline.yaml", "--output", "mermaid"]
+    )
     assert result.exit_code == 0
     assert "mermaid" in result.output
     assert "code" in result.output
@@ -67,7 +69,17 @@ def test_agents_list(runner):
     result = runner.invoke(main, ["agents", "list"])
     assert result.exit_code == 0
     # All 9 profiles should appear
-    for name in ["walnut", "almond", "chestnut", "coconut", "cherry", "mango", "strawberry", "blueberry", "grape"]:
+    for name in [
+        "walnut",
+        "almond",
+        "chestnut",
+        "coconut",
+        "cherry",
+        "mango",
+        "strawberry",
+        "blueberry",
+        "grape",
+    ]:
         assert name in result.output
 
 
@@ -90,11 +102,16 @@ def test_help(runner):
 
 def test_submit_dry_run(runner):
     """submit --dry-run 不需要 Temporal，校验 + 预览 DAG。"""
-    result = runner.invoke(main, [
-        "submit", "examples/minimal.pipeline.yaml",
-        "--dry-run",
-        "--param", "task=hello world",
-    ])
+    result = runner.invoke(
+        main,
+        [
+            "submit",
+            "examples/minimal.pipeline.yaml",
+            "--dry-run",
+            "--param",
+            "task=hello world",
+        ],
+    )
     assert result.exit_code == 0, result.output
     assert "[dry-run]" in result.output
     assert "minimal-pipeline" in result.output
@@ -105,11 +122,16 @@ def test_submit_dry_run_with_values(runner, tmp_path):
     """submit --dry-run --values 支持 values 文件参数注入。"""
     values = tmp_path / "values.yaml"
     values.write_text("task: test task from values\n")
-    result = runner.invoke(main, [
-        "submit", "examples/minimal.pipeline.yaml",
-        "--dry-run",
-        "--values", str(values),
-    ])
+    result = runner.invoke(
+        main,
+        [
+            "submit",
+            "examples/minimal.pipeline.yaml",
+            "--dry-run",
+            "--values",
+            str(values),
+        ],
+    )
     assert result.exit_code == 0, result.output
     assert "[dry-run]" in result.output
 
@@ -147,10 +169,15 @@ def test_dry_run_with_param(runner):
     """dry-run --output mermaid + submit --dry-run --param 一致。"""
     r1 = runner.invoke(main, ["dry-run", "examples/parameterized.pipeline.yaml"])
     assert r1.exit_code == 0
-    r2 = runner.invoke(main, [
-        "submit", "examples/parameterized.pipeline.yaml",
-        "--dry-run", "--param", "target_env=prod",
-    ])
+    r2 = runner.invoke(
+        main,
+        [
+            "submit",
+            "examples/parameterized.pipeline.yaml",
+            "--dry-run",
+            "--param",
+            "target_env=prod",
+        ],
+    )
     assert r2.exit_code == 0
     assert "prod" in r2.output
-

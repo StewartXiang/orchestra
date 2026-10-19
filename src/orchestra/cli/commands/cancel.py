@@ -1,7 +1,13 @@
 """orchestra cancel"""
+
 from __future__ import annotations
-import asyncio, click
+
+import asyncio
+
+import click
+
 from ..output import click_echo
+
 
 @click.command()
 @click.argument("pipeline_id")
@@ -15,6 +21,7 @@ def cancel(ctx: click.Context, pipeline_id: str, force: bool, yes: bool) -> None
 
     async def _cancel() -> None:
         from orchestra.cli.client import get_client
+
         client = await get_client(ctx.obj["host"], ctx.obj["namespace"])
         handle = client.get_workflow_handle(pipeline_id)
         if force:

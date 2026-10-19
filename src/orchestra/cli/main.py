@@ -4,30 +4,36 @@ from __future__ import annotations
 
 import click
 
-from .commands.init import init
-from .commands.validate import validate
-from .commands.dry_run import dry_run
-from .commands.submit import submit
-from .commands.status import status
-from .commands.cancel import cancel
-from .commands.approve import approve
-from .commands.reject import reject
-from .commands.re_run import re_run
-from .commands.signal import signal
 from .commands.agents import agents
-from .commands.schedule import schedule
-from .commands.logs import logs
-from .commands.replay import replay
-from .commands.inspect import inspect
+from .commands.approve import approve
+from .commands.cancel import cancel
 from .commands.chaos import chaos
+from .commands.dry_run import dry_run
 from .commands.health import health
+from .commands.init import init
+from .commands.inspect import inspect
 from .commands.list_pipelines import list_pipelines
+from .commands.logs import logs
+from .commands.re_run import re_run
+from .commands.reject import reject
+from .commands.replay import replay
+from .commands.schedule import schedule
+from .commands.signal import signal
+from .commands.status import status
+from .commands.submit import submit
+from .commands.validate import validate
 
 
 @click.group()
-@click.option("--host", default="localhost:7233", envvar="TEMPORAL_HOST", help="Temporal Server 地址")
-@click.option("--namespace", default="default", envvar="TEMPORAL_NAMESPACE", help="Temporal Namespace")
-@click.option("-o", "--output", default="table", type=click.Choice(["table", "json", "yaml"]), help="输出格式")
+@click.option(
+    "--host", default="localhost:7233", envvar="TEMPORAL_HOST", help="Temporal Server 地址"
+)
+@click.option(
+    "--namespace", default="default", envvar="TEMPORAL_NAMESPACE", help="Temporal Namespace"
+)
+@click.option(
+    "-o", "--output", default="table", type=click.Choice(["table", "json", "yaml"]), help="输出格式"
+)
 @click.pass_context
 def main(ctx: click.Context, host: str, namespace: str, output: str) -> None:
     """orchestra — AI Agent 流水线编排引擎 CLI"""

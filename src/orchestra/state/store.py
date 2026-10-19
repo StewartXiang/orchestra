@@ -13,14 +13,17 @@ import json
 from typing import Any
 
 from ..domain.errors import SchemaViolation
-from ..domain.state import ArtifactReference, StageOutput, WorkflowState
-from .jsonpath_bridge import get_value, set_value
+from ..domain.state import StageOutput
+from ..schema.jsonpath import (
+    check_write_isolation,
+)
 
 # 将 jsonpath 函数引入此模块（state 层使用 jsonpath 功能）
 from ..schema.jsonpath import (
     get_value as _jget,
+)
+from ..schema.jsonpath import (
     set_value as _jset,
-    check_write_isolation,
 )
 
 
@@ -51,13 +54,9 @@ class StateStore:
         path = output.output_path
 
         # 写隔离校验
-        conflicts = check_write_isolation(
-            output.stage_name, path, self._declared_outputs
-        )
+        conflicts = check_write_isolation(output.stage_name, path, self._declared_outputs)
         if conflicts:
-            raise SchemaViolation(
-                f"State 写隔离违规: {'; '.join(conflicts)}"
-            )
+            raise SchemaViolation(f"State 写隔离违规: {'; '.join(conflicts)}")
 
         _jset(self._state, path, output.output_value)
 
@@ -68,6 +67,7 @@ class StateStore:
     def snapshot(self) -> dict[str, Any]:
         """返回当前 State 的深拷贝快照（用于 continue_as_new 的 carry_over）。"""
         import copy
+
         return copy.deepcopy(self._state)
 
     def size_bytes(self) -> int:
@@ -79,7 +79,7 @@ class StateStore:
         cls,
         snapshot: dict[str, Any],
         declared_outputs: dict[str, str] | None = None,
-    ) -> "StateStore":
+    ) -> StateStore:
         """从 continue_as_new 结转的 snapshot 恢复。"""
         store = cls()
         store._state = snapshot

@@ -30,9 +30,7 @@ from typing import Any
 
 import jsonschema
 import jsonschema.validators
-import yaml
 
-from ..domain.errors import ConfigurationError
 from ..domain.pipeline import Pipeline
 from .dag import DagValidationResult, validate_dag
 from .expr import validate_expression
@@ -94,7 +92,9 @@ def validate_pipeline(
     # 2. apiVersion 兼容性
     api_ver = data.get("apiVersion", "")
     if api_ver not in _SUPPORTED_API_VERSIONS:
-        report.add_error(f"不支持的 apiVersion: {api_ver!r}，支持: {sorted(_SUPPORTED_API_VERSIONS)}")
+        report.add_error(
+            f"不支持的 apiVersion: {api_ver!r}，支持: {sorted(_SUPPORTED_API_VERSIONS)}"
+        )
         return report
 
     # 解析为 Pydantic 对象（Schema 已通过，这里不会抛）
@@ -121,13 +121,18 @@ def validate_pipeline(
         if stage.agents:
             for a in stage.agents:
                 if a not in agent_names:
-                    report.add_error(f"stage '{stage.name}': agents 列表中 '{a}' 未在 spec.agents 中定义")
-        if stage.agentSelector and profile_capabilities:
-            if not _selector_matches_any(stage.agentSelector, profile_capabilities):
-                report.add_warning(
-                    f"stage '{stage.name}': agentSelector {stage.agentSelector} "
-                    f"在当前 profile 集合中找不到匹配项"
-                )
+                    report.add_error(
+                        f"stage '{stage.name}': agents 列表中 '{a}' 未在 spec.agents 中定义"
+                    )
+        if (
+            stage.agentSelector
+            and profile_capabilities
+            and not _selector_matches_any(stage.agentSelector, profile_capabilities)
+        ):
+            report.add_warning(
+                f"stage '{stage.name}': agentSelector {stage.agentSelector} "
+                f"在当前 profile 集合中找不到匹配项"
+            )
         # 补偿动作中的 agent
         if spec.pipeline.compensation:
             for action in spec.pipeline.compensation.actions:
@@ -163,9 +168,7 @@ def validate_pipeline(
         if stage.input and isinstance(stage.input, str):
             for placeholder in _extract_secret_refs(stage.input):
                 if placeholder not in declared_secrets:
-                    report.add_error(
-                        f"stage '{stage.name}': 引用了未声明的 secret '{placeholder}'"
-                    )
+                    report.add_error(f"stage '{stage.name}': 引用了未声明的 secret '{placeholder}'")
 
     # 8. 超时合理性
     for stage in stages:
@@ -184,7 +187,7 @@ def validate_pipeline(
             if isinstance(val, str):
                 for ph in collect_placeholders(val):
                     if ph.startswith("params."):
-                        key = ph[len("params."):]
+                        key = ph[len("params.") :]
                         if key not in declared_params:
                             report.add_error(
                                 f"stage '{stage.name}': 模板 '{{{{ {ph} }}}}' "
@@ -195,8 +198,7 @@ def validate_pipeline(
     for stage in stages:
         if not _DNS1123_RE.match(stage.name):
             report.add_error(
-                f"stage 名称 '{stage.name}' 不符合 DNS-1123 规范"
-                "（小写字母/数字/连字符，≤63 字符）"
+                f"stage 名称 '{stage.name}' 不符合 DNS-1123 规范（小写字母/数字/连字符，≤63 字符）"
             )
 
     # 12. 补偿动作引用完整性
@@ -221,7 +223,7 @@ def validate_pipeline(
 def _check_json_schema(data: dict[str, Any], report: ValidationReport) -> None:
     schema_path = _SCHEMA_DIR / "pipeline.schema.json"
     if not schema_path.exists():
-        report.add_warning(f"找不到 pipeline.schema.json，跳过 JSON Schema 校验")
+        report.add_warning("找不到 pipeline.schema.json，跳过 JSON Schema 校验")
         return
     schema = json.loads(schema_path.read_text())
     validator_cls = jsonschema.validators.validator_for(schema)
@@ -253,10 +255,20 @@ def _check_timeout_order(
     report: ValidationReport,
 ) -> None:
     """检查 heartbeat < startToClose < scheduleToClose。"""
+
     def parse_seconds(d: str | None) -> float | None:
         if d is None:
             return None
-        units = {"ns": 1e-9, "us": 1e-6, "ms": 1e-3, "s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+        units = {
+            "ns": 1e-9,
+            "us": 1e-6,
+            "ms": 1e-3,
+            "s": 1,
+            "m": 60,
+            "h": 3600,
+            "d": 86400,
+            "w": 604800,
+        }
         m = re.fullmatch(r"(\d+)(ns|us|ms|s|m|h|d|w)", d)
         if not m:
             return None
@@ -283,8 +295,12 @@ def _check_resource_quota(
 ) -> None:
     """sum(agent.resources.requests) ≤ capacity。当前仅检查 tokensPerMinute。"""
     total_tpm = 0
-    for name, agent_spec in agents.items():
-        if agent_spec.resources and agent_spec.resources.requests and agent_spec.resources.requests.tokensPerMinute:
+    for _name, agent_spec in agents.items():
+        if (
+            agent_spec.resources
+            and agent_spec.resources.requests
+            and agent_spec.resources.requests.tokensPerMinute
+        ):
             total_tpm += agent_spec.resources.requests.tokensPerMinute
     limit_tpm = capacity.get("tokensPerMinute")
     if limit_tpm and total_tpm > limit_tpm:

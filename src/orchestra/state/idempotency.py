@@ -14,9 +14,13 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import sqlite3
 
 # ---------- 抽象接口 ----------
+
 
 class IdempotencyStore:
     """幂等键存储抽象基类。"""
@@ -33,6 +37,7 @@ class IdempotencyStore:
 
 # ---------- Redis 后端 ----------
 
+
 class RedisIdempotencyStore(IdempotencyStore):
     """基于 Redis 的幂等键存储。
 
@@ -46,6 +51,7 @@ class RedisIdempotencyStore(IdempotencyStore):
     async def _get_redis(self) -> Any:
         if self._redis is None:
             import redis.asyncio as aioredis  # type: ignore[import-untyped]
+
             self._redis = await aioredis.from_url(self._url, decode_responses=True)
         return self._redis
 
@@ -66,6 +72,7 @@ class RedisIdempotencyStore(IdempotencyStore):
 
 
 # ---------- Memory 后端（测试 / 高并发场景）----------
+
 
 class MemoryIdempotencyStore(IdempotencyStore):
     """纯内存幂等键存储。无持久化，进程重启丢失。
@@ -116,8 +123,9 @@ class SQLiteIdempotencyStore(IdempotencyStore):
         self._db_path = str(db_path)
         self._db: Any = None
 
-    def _get_sync_conn(self) -> "sqlite3.Connection":
+    def _get_sync_conn(self) -> sqlite3.Connection:
         import sqlite3 as _sqlite3
+
         if self._db is None:
             self._db = _sqlite3.connect(self._db_path, check_same_thread=False)
             self._db.executescript(_SQLITE_SCHEMA)
@@ -126,6 +134,7 @@ class SQLiteIdempotencyStore(IdempotencyStore):
 
     async def get(self, key: str) -> Any | None:
         import asyncio
+
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._sync_get, key)
 
@@ -137,6 +146,7 @@ class SQLiteIdempotencyStore(IdempotencyStore):
 
     async def put(self, key: str, value: Any, ttl_seconds: int = 86400) -> None:
         import asyncio
+
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._sync_put, key, value, ttl_seconds)
 

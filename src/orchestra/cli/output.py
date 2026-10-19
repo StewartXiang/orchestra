@@ -9,12 +9,14 @@ from typing import Any
 try:
     from rich.console import Console
     from rich.table import Table
+
     _RICH = True
 except ImportError:
     _RICH = False
 
 try:
     import yaml as _yaml
+
     _YAML = True
 except ImportError:
     _YAML = False
@@ -72,6 +74,7 @@ def print_output(data: Any, fmt: str = "table") -> None:
 def click_echo(msg: str) -> None:
     try:
         import click
+
         click.echo(msg)
     except ImportError:
         print(msg)
@@ -80,6 +83,7 @@ def click_echo(msg: str) -> None:
 def error(msg: str) -> None:
     try:
         import click
+
         click.secho(f"Error: {msg}", fg="red", err=True)
     except ImportError:
         print(f"Error: {msg}", file=sys.stderr)

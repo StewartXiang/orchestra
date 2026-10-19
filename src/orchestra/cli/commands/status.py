@@ -1,8 +1,12 @@
 """orchestra status — 流水线状态查询。"""
+
 from __future__ import annotations
+
 import asyncio
+
 import click
-from ..output import click_echo, print_output, error
+
+from ..output import click_echo, error, print_output
 
 
 @click.command()
@@ -11,8 +15,9 @@ from ..output import click_echo, print_output, error
 @click.option("--pending-approvals", "show_approvals", is_flag=True)
 @click.option("--query", "query_name", default=None, help="执行 Workflow Query")
 @click.pass_context
-def status(ctx: click.Context, pipeline_id: str, watch: bool,
-           show_approvals: bool, query_name: str) -> None:
+def status(
+    ctx: click.Context, pipeline_id: str, watch: bool, show_approvals: bool, query_name: str
+) -> None:
     """查看流水线状态。不指定 ID 则列出最近 20 条。"""
     asyncio.run(_do_status(ctx, pipeline_id, watch, show_approvals, query_name))
 
@@ -20,11 +25,12 @@ def status(ctx: click.Context, pipeline_id: str, watch: bool,
 async def _do_status(ctx, pipeline_id, watch, show_approvals, query_name):
     try:
         from orchestra.worker.registry import make_client
+
         client = await asyncio.wait_for(
             make_client(ctx.obj["host"], ctx.obj["namespace"]),
             timeout=5.0,
         )
-    except (asyncio.TimeoutError, Exception) as e:
+    except (TimeoutError, Exception) as e:
         error(f"无法连接 Temporal ({ctx.obj['host']}): {e}")
         click_echo("提示: 运行 `docker compose -f deploy/docker-compose.yml up -d` 启动服务")
         return
@@ -37,12 +43,14 @@ async def _do_status(ctx, pipeline_id, watch, show_approvals, query_name):
             workflows = await client.list_workflows("ExecutionStatus='Running'")
             rows = []
             async for wf in workflows:
-                rows.append({
-                    "id": wf.id,
-                    "run_id": wf.run_id[:8] + "...",
-                    "status": str(wf.status).replace("WORKFLOW_EXECUTION_STATUS_", ""),
-                    "start_time": str(wf.start_time)[:19],
-                })
+                rows.append(
+                    {
+                        "id": wf.id,
+                        "run_id": wf.run_id[:8] + "...",
+                        "status": str(wf.status).replace("WORKFLOW_EXECUTION_STATUS_", ""),
+                        "start_time": str(wf.start_time)[:19],
+                    }
+                )
                 if len(rows) >= 20:
                     break
             if rows:

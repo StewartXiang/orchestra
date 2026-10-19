@@ -28,8 +28,8 @@ from .enums import (
 )
 from .review import ReviewGate
 
-
 # ---------- Output 配置 ----------
+
 
 class OutputSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -42,8 +42,10 @@ class OutputSpec(BaseModel):
 
 # ---------- 子结构 ----------
 
+
 class StageTimeouts(BaseModel):
     """Stage 4 字段超时，与 Temporal Activity Options 一一对应。"""
+
     model_config = ConfigDict(extra="forbid")
 
     scheduleToStart: DurationStr | None = None
@@ -131,8 +133,10 @@ class CacheSpec(BaseModel):
 
 # ---------- Stage ----------
 
+
 class Stage(BaseModel):
     """流水线节点。``agent / agents / agentSelector / childWorkflow / approval / dynamic / loop / reviewGate`` 八选一。"""
+
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     name: DnsName
@@ -159,7 +163,7 @@ class Stage(BaseModel):
     outputSchema: dict[str, Any] | None = None
     schemaViolationPolicy: Literal["fail", "warn"] = "fail"
     requireUpstream: bool = False
-    prompt: str | None = None             # Agent prompt 注入（支持 {{ input }} 模板）
+    prompt: str | None = None  # Agent prompt 注入（支持 {{ input }} 模板）
 
     # 执行控制
     timeouts: StageTimeouts | None = None
@@ -182,6 +186,7 @@ class Stage(BaseModel):
 
 # ---------- Compensation ----------
 
+
 class CompensationAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -201,6 +206,7 @@ class Compensation(BaseModel):
 
 
 # ---------- Global ----------
+
 
 class Notification(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -233,6 +239,7 @@ class GlobalSpec(BaseModel):
 
 
 # ---------- Secret / Parameter ----------
+
 
 class VaultRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -307,6 +314,7 @@ class StageStatus(BaseModel):
 
 class PipelineStatus(BaseModel):
     """只读，由引擎维护。"""
+
     model_config = ConfigDict(extra="forbid")
 
     phase: Phase
@@ -319,6 +327,7 @@ class PipelineStatus(BaseModel):
 
 class Pipeline(BaseModel):
     """``kind: Pipeline`` 顶层资源（流水线**定义**）。"""
+
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     apiVersion: ApiVersion
@@ -356,6 +365,7 @@ class PipelineRunSpec(BaseModel):
 
 class PipelineRun(BaseModel):
     """``kind: PipelineRun`` — 一次具体执行实例。"""
+
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     apiVersion: ApiVersion

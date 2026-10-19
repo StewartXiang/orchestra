@@ -40,10 +40,7 @@ class EncryptingCodec(PayloadCodec):
         if key is None:
             # 开发模式：从环境变量读取；生产环境必须显式传入
             key_hex = os.environ.get("ORCHESTRA_ENCRYPTION_KEY", "")
-            if key_hex:
-                key = bytes.fromhex(key_hex)
-            else:
-                key = b""  # 空密钥 = 不加密（pass-through）
+            key = bytes.fromhex(key_hex) if key_hex else b""  # 空密钥 = 不加密（pass-through）
         if key and len(key) != 32:
             raise ValueError("加密密钥必须是 32 字节（AES-256）")
         self._key = key

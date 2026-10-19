@@ -27,7 +27,7 @@ class DagStatusQuery:
 @dataclass
 class ApprovalStatusQuery:
     stage_name: str
-    status: str        # "pending" | "approved" | "rejected" | "not_required"
+    status: str  # "pending" | "approved" | "rejected" | "not_required"
     approvers: list[dict[str, Any]] = field(default_factory=list)
     timeout_at: str | None = None
 

@@ -5,7 +5,6 @@ Stage 执行后由 Workflow 调用，将 Agent 产出物写入 ArtifactStore。
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 
 from temporalio import activity

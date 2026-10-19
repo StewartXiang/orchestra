@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 from temporalio import activity
 
-from ..adapters.registry import list_adapter_names, get_adapter
+from ..adapters.registry import get_adapter, list_adapter_names
 from ..observability.logging import get_logger
 
 logger = get_logger(__name__)
@@ -30,6 +30,7 @@ class AgentResolveInput:
     字段对应 domain.agent.AgentSelector，但使用纯 Python 类型
     以避免 Temporal 反序列化 Pydantic 对象的问题。
     """
+
     role: str | None = None
     capabilities: list[str] = field(default_factory=list)
 
@@ -37,6 +38,7 @@ class AgentResolveInput:
 @dataclass
 class ResolvedAgent:
     """解析结果：匹配到的 Agent 及其路由信息。"""
+
     agent_name: str
     task_queue: str
     role: str
@@ -61,6 +63,7 @@ async def resolve_agent_by_selector(inp: AgentResolveInput) -> ResolvedAgent:
     activity.heartbeat({"phase": "resolving", "role": inp.role, "capabilities": inp.capabilities})
 
     import asyncio
+
     from ..state.idempotency import get_store
 
     info = activity.info()
@@ -78,6 +81,7 @@ async def resolve_agent_by_selector(inp: AgentResolveInput) -> ResolvedAgent:
 
     if activity.is_cancelled():
         from temporalio.exceptions import ActivityCancellationError
+
         raise ActivityCancellationError()
 
     activity.heartbeat({"phase": "discovering", "adapters_total": len(adapter_names)})
@@ -85,6 +89,7 @@ async def resolve_agent_by_selector(inp: AgentResolveInput) -> ResolvedAgent:
     for idx, name in enumerate(adapter_names):
         if activity.is_cancelled():
             from temporalio.exceptions import ActivityCancellationError
+
             raise ActivityCancellationError()
 
         try:
@@ -106,24 +111,29 @@ async def resolve_agent_by_selector(inp: AgentResolveInput) -> ResolvedAgent:
 
             # 获取 task_queue（优先用 profile 中的配置，其次用 agent-name）
             from ..adapters.registry import get_profile_task_queue
+
             task_queue = get_profile_task_queue(name)
 
-            matches.append(ResolvedAgent(
-                agent_name=name,
-                task_queue=task_queue,
-                role=caps.role.value,
-                capabilities=caps.capabilities,
-                model=caps.model,
-            ))
+            matches.append(
+                ResolvedAgent(
+                    agent_name=name,
+                    task_queue=task_queue,
+                    role=caps.role.value,
+                    capabilities=caps.capabilities,
+                    model=caps.model,
+                )
+            )
 
-            activity.heartbeat({
-                "phase": "discovering",
-                "adapters_checked": idx + 1,
-                "adapters_total": len(adapter_names),
-                "matches_found": len(matches),
-            })
+            activity.heartbeat(
+                {
+                    "phase": "discovering",
+                    "adapters_checked": idx + 1,
+                    "adapters_total": len(adapter_names),
+                    "matches_found": len(matches),
+                }
+            )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("agent_capabilities_timeout", agent=name)
             continue
         except Exception as e:
@@ -131,26 +141,39 @@ async def resolve_agent_by_selector(inp: AgentResolveInput) -> ResolvedAgent:
             continue
 
     if not matches:
-        error_msg = f"没有 Agent 匹配 agentSelector role={inp.role!r} capabilities={inp.capabilities!r}"
+        error_msg = (
+            f"没有 Agent 匹配 agentSelector role={inp.role!r} capabilities={inp.capabilities!r}"
+        )
         logger.error("agent_resolve_no_match", role=inp.role, capabilities=inp.capabilities)
         # 用非可重试错误终止
         from temporalio.exceptions import ApplicationError
+
         raise ApplicationError(error_msg, non_retryable=True)
 
     result = matches[0]  # 调用方 Workflow 负责多选一
 
     # ④ 写幂等缓存
-    await store.put(idem_key, {
-        "agent_name": result.agent_name,
-        "task_queue": result.task_queue,
-        "role": result.role,
-        "capabilities": result.capabilities,
-        "model": result.model,
-    }, ttl_seconds=300)  # 短 TTL，同一 Workflow 内复用即可
+    await store.put(
+        idem_key,
+        {
+            "agent_name": result.agent_name,
+            "task_queue": result.task_queue,
+            "role": result.role,
+            "capabilities": result.capabilities,
+            "model": result.model,
+        },
+        ttl_seconds=300,
+    )  # 短 TTL，同一 Workflow 内复用即可
 
-    activity.heartbeat({"phase": "resolved", "agent": result.agent_name, "task_queue": result.task_queue})
-    logger.info("agent_resolved", selector=f"role={inp.role} caps={inp.capabilities}",
-                agent=result.agent_name, task_queue=result.task_queue)
+    activity.heartbeat(
+        {"phase": "resolved", "agent": result.agent_name, "task_queue": result.task_queue}
+    )
+    logger.info(
+        "agent_resolved",
+        selector=f"role={inp.role} caps={inp.capabilities}",
+        agent=result.agent_name,
+        task_queue=result.task_queue,
+    )
 
     return result
 
@@ -158,6 +181,7 @@ async def resolve_agent_by_selector(inp: AgentResolveInput) -> ResolvedAgent:
 @dataclass
 class AgentResolveAllOutput:
     """批量解析结果：返回所有匹配项供 Workflow 负载均衡。"""
+
     matches: list[ResolvedAgent] = field(default_factory=list)
 
 
@@ -172,6 +196,7 @@ async def resolve_all_matching_agents(inp: AgentResolveInput) -> AgentResolveAll
     activity.heartbeat({"phase": "resolving_all", "role": inp.role})
 
     import asyncio
+
     from ..state.idempotency import get_store
 
     info = activity.info()
@@ -188,6 +213,7 @@ async def resolve_all_matching_agents(inp: AgentResolveInput) -> AgentResolveAll
 
     if activity.is_cancelled():
         from temporalio.exceptions import ActivityCancellationError
+
         raise ActivityCancellationError()
 
     for idx, name in enumerate(adapter_names):
@@ -206,45 +232,55 @@ async def resolve_all_matching_agents(inp: AgentResolveInput) -> AgentResolveAll
                     continue
 
             from ..adapters.registry import get_profile_task_queue
+
             task_queue = get_profile_task_queue(name)
 
-            matches.append(ResolvedAgent(
-                agent_name=name,
-                task_queue=task_queue,
-                role=caps.role.value,
-                capabilities=caps.capabilities,
-                model=caps.model,
-            ))
+            matches.append(
+                ResolvedAgent(
+                    agent_name=name,
+                    task_queue=task_queue,
+                    role=caps.role.value,
+                    capabilities=caps.capabilities,
+                    model=caps.model,
+                )
+            )
 
-            activity.heartbeat({
-                "phase": "discovering",
-                "adapters_checked": idx + 1,
-                "adapters_total": len(adapter_names),
-                "matches_found": len(matches),
-            })
+            activity.heartbeat(
+                {
+                    "phase": "discovering",
+                    "adapters_checked": idx + 1,
+                    "adapters_total": len(adapter_names),
+                    "matches_found": len(matches),
+                }
+            )
 
-        except (asyncio.TimeoutError, Exception):
+        except (TimeoutError, Exception):
             continue
 
     if not matches:
         from temporalio.exceptions import ApplicationError
+
         raise ApplicationError(
             f"没有 Agent 匹配 agentSelector role={inp.role!r} capabilities={inp.capabilities!r}",
             non_retryable=True,
         )
 
-    await store.put(idem_key, {
-        "matches": [
-            {
-                "agent_name": m.agent_name,
-                "task_queue": m.task_queue,
-                "role": m.role,
-                "capabilities": m.capabilities,
-                "model": m.model,
-            }
-            for m in matches
-        ]
-    }, ttl_seconds=300)
+    await store.put(
+        idem_key,
+        {
+            "matches": [
+                {
+                    "agent_name": m.agent_name,
+                    "task_queue": m.task_queue,
+                    "role": m.role,
+                    "capabilities": m.capabilities,
+                    "model": m.model,
+                }
+                for m in matches
+            ]
+        },
+        ttl_seconds=300,
+    )
 
     activity.heartbeat({"phase": "resolved_all", "match_count": len(matches)})
     return AgentResolveAllOutput(matches=matches)

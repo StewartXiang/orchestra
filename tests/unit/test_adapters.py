@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -13,12 +12,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from orchestra.adapters.mock import MockAgentAdapter, MockBehavior
 from orchestra.adapters.sandbox import Sandbox
-from orchestra.domain.enums import Role
 from orchestra.domain.errors import ToolNotAllowed
 from orchestra.domain.state import TaskInput
 
-
 # ── Sandbox ──────────────────────────────────
+
 
 def test_sandbox_allowed():
     sb = Sandbox(allowed_tools=["file_read", "git_commit"])
@@ -54,6 +52,7 @@ def test_sandbox_allows_normal_path():
 
 
 # ── MockAdapter ──────────────────────────────
+
 
 def _make_task() -> TaskInput:
     return TaskInput(
@@ -95,6 +94,7 @@ async def test_mock_health_ready():
     adapter = MockAgentAdapter("walnut")
     h = await adapter.check_health()
     from orchestra.domain.enums import HealthStatus
+
     assert h.status == HealthStatus.READY
 
 
@@ -115,20 +115,22 @@ async def test_mock_cancel():
 
 # ── Registry 辅助函数 ──
 
+
 def test_list_adapter_names():
     """list_adapter_names 返回已注册的所有 adapter。"""
     from orchestra.adapters.registry import build_registry, list_adapter_names
     from orchestra.domain.agent import Profile, Role
-    from orchestra.domain.enums import HealthStatus
 
     profiles = {
         "walnut": Profile(
-            name="walnut", role=Role.DEVELOPER,
+            name="walnut",
+            role=Role.DEVELOPER,
             capabilities=["python", "godot"],
             mcpEndpoint="mcp://localhost:18761",
         ),
         "almond": Profile(
-            name="almond", role=Role.TESTER,
+            name="almond",
+            role=Role.TESTER,
             capabilities=["pytest"],
             mcpEndpoint="mcp://localhost:18762",
         ),
@@ -141,5 +143,6 @@ def test_list_adapter_names():
 def test_get_profile_task_queue():
     """get_profile_task_queue 返回 'agent-{name}' 格式。"""
     from orchestra.adapters.registry import get_profile_task_queue
+
     assert get_profile_task_queue("walnut") == "agent-walnut"
     assert get_profile_task_queue("grape") == "agent-grape"

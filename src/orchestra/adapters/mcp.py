@@ -12,9 +12,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
+from collections.abc import Callable
 from datetime import timedelta
-from typing import Any, Callable
+from typing import Any
 
 import httpx
 
@@ -91,9 +93,9 @@ class MCPAdapter:
             }
 
         if on_heartbeat:
-            on_heartbeat(ProgressInfo(
-                stage=task.stage_name, phase="started", progress=0, attempt=1
-            ))
+            on_heartbeat(
+                ProgressInfo(stage=task.stage_name, phase="started", progress=0, attempt=1)
+            )
 
         try:
             response = await client.post(
@@ -113,9 +115,9 @@ class MCPAdapter:
         data = response.json()
 
         if on_heartbeat:
-            on_heartbeat(ProgressInfo(
-                stage=task.stage_name, phase="completing", progress=100, attempt=1
-            ))
+            on_heartbeat(
+                ProgressInfo(stage=task.stage_name, phase="completing", progress=100, attempt=1)
+            )
 
         duration = time.monotonic() - start
 
@@ -157,13 +159,11 @@ class MCPAdapter:
 
     async def cancel_task(self, task_id: str, grace_period: timedelta) -> None:
         client = await self._get_client()
-        try:
+        with contextlib.suppress(Exception):  # 取消尽力而为
             await asyncio.wait_for(
                 client.post(f"{self._endpoint}/cancel", json={"task_id": task_id}),
                 timeout=grace_period.total_seconds(),
             )
-        except (asyncio.TimeoutError, Exception):
-            pass  # 取消尽力而为
 
     async def get_capabilities(self) -> AgentCapabilities:
         client = await self._get_client()

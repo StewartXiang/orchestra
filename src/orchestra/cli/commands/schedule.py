@@ -1,15 +1,22 @@
 """orchestra schedule — 定时流水线调度。"""
+
 from __future__ import annotations
+
 import asyncio
 import uuid
+from typing import TYPE_CHECKING
+
 import click
-import yaml
+
 from ..output import click_echo, error
 
+if TYPE_CHECKING:
+    import temporalio.common
 
-def _parse_cron(expr: str) -> "temporalio.common.ScheduleCalendarSpec | None":
+
+def _parse_cron(expr: str) -> temporalio.common.ScheduleCalendarSpec | None:
     """解析 cron 表达式为 Temporal ScheduleSpec。"""
-    from temporalio.common import ScheduleCalendarSpec, ScheduleRange, ScheduleSpec
+    from temporalio.common import ScheduleCalendarSpec, ScheduleRange
 
     parts = expr.strip().split()
     if len(parts) != 5:
@@ -47,11 +54,18 @@ def schedule() -> None:
 @click.pass_context
 def create(ctx: click.Context, pipeline_file: str, cron: str, param: tuple) -> None:
     """创建定时 Schedule。"""
+
     async def _create() -> None:
+        from temporalio.common import (
+            Schedule,
+            ScheduleActionStartWorkflow,
+            ScheduleSpec,
+            ScheduleState,
+        )
+
         from orchestra.cli.client import get_client
         from orchestra.schema.parser import parse_pipeline
         from orchestra.workflows.pipeline_workflow import PipelineRunInput, PipelineWorkflow
-        from temporalio.common import Schedule, ScheduleActionStartWorkflow, ScheduleSpec, ScheduleState
 
         spec = _parse_cron(cron)
         if spec is None:
@@ -68,7 +82,7 @@ def create(ctx: click.Context, pipeline_file: str, cron: str, param: tuple) -> N
 
         run_id = uuid.uuid4().hex[:8]
         sched_id = f"sched-{pipeline.metadata.name}-{uuid.uuid4().hex[:6]}"
-        first_agent = list(pipeline.spec.agents.keys())[0]
+        first_agent = next(iter(pipeline.spec.agents.keys()))
         task_queue = pipeline.spec.agents[first_agent].taskQueue or f"agent-{first_agent}"
 
         await client.create_schedule(
@@ -76,12 +90,14 @@ def create(ctx: click.Context, pipeline_file: str, cron: str, param: tuple) -> N
             Schedule(
                 action=ScheduleActionStartWorkflow(
                     workflow=PipelineWorkflow.run,
-                    args=[PipelineRunInput(
-                        pipeline_dict=pipeline.model_dump(by_alias=True),
-                        run_id=run_id,
-                        params=params,
-                        actor="schedule",
-                    )],
+                    args=[
+                        PipelineRunInput(
+                            pipeline_dict=pipeline.model_dump(by_alias=True),
+                            run_id=run_id,
+                            params=params,
+                            actor="schedule",
+                        )
+                    ],
                     id=f"{pipeline.metadata.name}-{run_id}",
                     task_queue=task_queue,
                 ),
@@ -89,7 +105,7 @@ def create(ctx: click.Context, pipeline_file: str, cron: str, param: tuple) -> N
                 state=ScheduleState(note=f"Pipeline: {pipeline.metadata.name}"),
             ),
         )
-        click_echo(f"✓ schedule created")
+        click_echo("✓ schedule created")
         click_echo(f"  id   : {sched_id}")
         click_echo(f"  cron : {cron}")
         click_echo(f"  queue: {task_queue}")
@@ -101,11 +117,14 @@ def create(ctx: click.Context, pipeline_file: str, cron: str, param: tuple) -> N
 @click.pass_context
 def list_schedules(ctx: click.Context) -> None:
     """列出所有 Schedule。"""
+
     async def _list() -> None:
         from orchestra.cli.client import get_client
+
         client = await get_client(ctx.obj["host"], ctx.obj["namespace"])
         async for s in client.list_schedules():
             click_echo(f"  {s.id}  {s.schedule.state.note or ''}")
+
     asyncio.run(_list())
 
 
@@ -114,12 +133,15 @@ def list_schedules(ctx: click.Context) -> None:
 @click.pass_context
 def pause(ctx: click.Context, schedule_id: str) -> None:
     """暂停 Schedule。"""
+
     async def _pause() -> None:
         from orchestra.cli.client import get_client
+
         client = await get_client(ctx.obj["host"], ctx.obj["namespace"])
         handle = client.get_schedule_handle(schedule_id)
         await handle.pause(note="Paused via CLI")
         click_echo(f"✓ schedule paused: {schedule_id}")
+
     asyncio.run(_pause())
 
 
@@ -128,12 +150,15 @@ def pause(ctx: click.Context, schedule_id: str) -> None:
 @click.pass_context
 def resume(ctx: click.Context, schedule_id: str) -> None:
     """恢复 Schedule。"""
+
     async def _resume() -> None:
         from orchestra.cli.client import get_client
+
         client = await get_client(ctx.obj["host"], ctx.obj["namespace"])
         handle = client.get_schedule_handle(schedule_id)
         await handle.resume(note="Resumed via CLI")
         click_echo(f"✓ schedule resumed: {schedule_id}")
+
     asyncio.run(_resume())
 
 
@@ -142,12 +167,15 @@ def resume(ctx: click.Context, schedule_id: str) -> None:
 @click.pass_context
 def trigger(ctx: click.Context, schedule_id: str) -> None:
     """立即手动触发一次 Schedule。"""
+
     async def _trigger() -> None:
         from orchestra.cli.client import get_client
+
         client = await get_client(ctx.obj["host"], ctx.obj["namespace"])
         handle = client.get_schedule_handle(schedule_id)
         await handle.trigger()
         click_echo(f"✓ schedule triggered: {schedule_id}")
+
     asyncio.run(_trigger())
 
 
@@ -156,10 +184,13 @@ def trigger(ctx: click.Context, schedule_id: str) -> None:
 @click.pass_context
 def delete(ctx: click.Context, schedule_id: str) -> None:
     """删除 Schedule。"""
+
     async def _delete() -> None:
         from orchestra.cli.client import get_client
+
         client = await get_client(ctx.obj["host"], ctx.obj["namespace"])
         handle = client.get_schedule_handle(schedule_id)
         await handle.delete()
         click_echo(f"✓ schedule deleted: {schedule_id}")
+
     asyncio.run(_delete())

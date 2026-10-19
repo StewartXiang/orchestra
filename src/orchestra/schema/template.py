@@ -70,13 +70,14 @@ def validate_placeholders(
     for expr in collect_placeholders(template):
         var_name = _extract_var_name(expr)
         if var_name and var_name.startswith("params."):
-            param_key = var_name[len("params."):]
+            param_key = var_name[len("params.") :]
             if param_key not in declared_params:
                 errors.append(f"占位符 '{{{{ {expr} }}}}' 引用了未声明的参数 '{param_key}'")
     return errors
 
 
 # ---------- 内部实现 ----------
+
 
 def _eval_expr(expr: str, context: dict[str, Any]) -> str:
     """求值单个占位符表达式（支持变量 + 过滤器管道）。"""
@@ -111,13 +112,9 @@ def _resolve_var(var_expr: str, context: dict[str, Any]) -> Any:
     current: Any = context
     for key in keys:
         if not isinstance(current, dict):
-            raise InvalidInput(
-                f"模板变量 '{var_expr}' 解析失败：'{key}' 的父节点不是 dict"
-            )
+            raise InvalidInput(f"模板变量 '{var_expr}' 解析失败：'{key}' 的父节点不是 dict")
         if key not in current:
-            raise InvalidInput(
-                f"模板变量 '{var_expr}' 未在上下文中找到（missing key '{key}'）"
-            )
+            raise InvalidInput(f"模板变量 '{var_expr}' 未在上下文中找到（missing key '{key}'）")
         current = current[key]
     return current
 
@@ -155,6 +152,4 @@ def _apply_filter(filter_expr: str, value: Any, original_expr: str) -> Any:
             return value if value not in (None, "", [], {}) else m2.group(1)
         raise InvalidInput(f"过滤器 default 语法错误: {filter_expr!r}")
 
-    raise InvalidInput(
-        f"模板表达式 '{original_expr}' 使用了未知过滤器: '{fname}'"
-    )
+    raise InvalidInput(f"模板表达式 '{original_expr}' 使用了未知过滤器: '{fname}'")

@@ -16,7 +16,7 @@ __all__ = [
     "MockBehavior",
     "Sandbox",
     "build_registry",
-    "get_adapter",
     "find_adapter_by_selector",
+    "get_adapter",
     "load_profiles_from_yaml",
 ]

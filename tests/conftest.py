@@ -11,12 +11,10 @@
 
 from __future__ import annotations
 
-import asyncio
+import contextlib
 import os
 import sys
-import tempfile
 from pathlib import Path
-from typing import AsyncGenerator
 
 import pytest
 import pytest_asyncio
@@ -32,10 +30,23 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 def _preload_for_sandbox() -> None:
     """预加载 Pydantic 及其传递依赖。"""
     _MODULES = [
-        "pydantic", "pydantic.plugin", "pydantic.plugin._loader",
-        "pydantic._internal", "pydantic.deprecated", "pydantic_core",
-        "zoneinfo", "sysconfig", "platform", "io", "pathlib",
-        "json", "yaml", "datetime", "re", "typing", "copy",
+        "pydantic",
+        "pydantic.plugin",
+        "pydantic.plugin._loader",
+        "pydantic._internal",
+        "pydantic.deprecated",
+        "pydantic_core",
+        "zoneinfo",
+        "sysconfig",
+        "platform",
+        "io",
+        "pathlib",
+        "json",
+        "yaml",
+        "datetime",
+        "re",
+        "typing",
+        "copy",
         "orchestra.domain.pipeline",
         "orchestra.domain.agent",
         "orchestra.domain.state",
@@ -43,10 +54,8 @@ def _preload_for_sandbox() -> None:
         "orchestra.domain.errors",
     ]
     for mod in _MODULES:
-        try:
+        with contextlib.suppress(ImportError):
             __import__(mod)
-        except ImportError:
-            pass
 
 
 _preload_for_sandbox()
@@ -58,10 +67,10 @@ from orchestra.schema.parser import parse_pipeline
 from orchestra.state.idempotency import SQLiteIdempotencyStore
 from orchestra.state.store import StateStore
 
-
 # ──────────────────────────────────────────────
 # 全局状态重置（防止测试间污染）
 # ──────────────────────────────────────────────
+
 
 @pytest.fixture(autouse=True)
 def _reset_global_state():
@@ -74,6 +83,7 @@ def _reset_global_state():
     # 测试后清理
     try:
         import orchestra.adapters.registry as _reg
+
         _reg._REGISTRY.clear()
     except Exception:
         pass
@@ -83,6 +93,7 @@ def _reset_global_state():
 # ──────────────────────────────────────────────
 # 基础 Fixtures
 # ──────────────────────────────────────────────
+
 
 @pytest.fixture(scope="session")
 def project_root() -> Path:
@@ -139,6 +150,7 @@ def mock_registry(profiles):
 # Pipeline Fixtures
 # ──────────────────────────────────────────────
 
+
 @pytest.fixture(scope="session")
 def pipeline_minimal(project_root):
     return parse_pipeline(project_root / "examples" / "minimal.pipeline.yaml")
@@ -157,6 +169,7 @@ def pipeline_parameterized(project_root):
 # ──────────────────────────────────────────────
 # State / Storage Fixtures
 # ──────────────────────────────────────────────
+
 
 @pytest.fixture
 def state_store():
@@ -181,6 +194,7 @@ async def idempotency_store(tmp_path):
 @pytest.fixture
 def artifact_store(tmp_path):
     from orchestra.state.artifact_store import LocalArtifactStore
+
     return LocalArtifactStore(tmp_path / "artifacts")
 
 
@@ -188,14 +202,17 @@ def artifact_store(tmp_path):
 # Temporal TestWorkflowEnvironment（集成测试）
 # ──────────────────────────────────────────────
 
+
 @pytest_asyncio.fixture
 async def temporal_env():
     """Temporal in-process 测试环境（无需真实 Server）。"""
     try:
         from temporalio.testing import WorkflowEnvironment
+
         # 使用 pydantic_data_converter 消除 Pydantic v2 deprecation warning
         try:
             from temporalio.contrib.pydantic import pydantic_data_converter  # type: ignore[import-untyped]
+
             async with await WorkflowEnvironment.start_time_skipping(
                 data_converter=pydantic_data_converter
             ) as env:
@@ -212,12 +229,13 @@ async def temporal_env():
 async def temporal_worker(temporal_env, mock_registry):
     """在 TestWorkflowEnvironment 中运行的 Worker（mock Adapter）。"""
     try:
-        from orchestra.worker.registry import build_worker
-        from orchestra.state.idempotency import init_store
-        from orchestra.state.artifact_store import init_artifact_store
-        from orchestra.observability.audit import init_audit_writer
-
         import tempfile
+
+        from orchestra.observability.audit import init_audit_writer
+        from orchestra.state.artifact_store import init_artifact_store
+        from orchestra.state.idempotency import init_store
+        from orchestra.worker.registry import build_worker
+
         tmp = tempfile.mkdtemp()
         init_store("memory")  # 测试用内存存储，避免 SQLite 并发问题
         init_artifact_store(os.path.join(tmp, "artifacts"))

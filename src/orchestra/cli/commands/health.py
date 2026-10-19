@@ -1,8 +1,12 @@
 """orchestra health — 集群健康检查（支持离线模式）。"""
+
 from __future__ import annotations
+
 import asyncio
+
 import click
-from ..output import click_echo, print_output, error
+
+from ..output import click_echo, error, print_output
 
 
 @click.command()
@@ -16,6 +20,7 @@ def health(ctx: click.Context, agent: str, no_mcp: bool) -> None:
 
 async def _do_health(ctx: click.Context, agent: str | None, no_mcp: bool) -> None:
     from pathlib import Path
+
     from orchestra.adapters.registry import load_profiles_from_yaml
 
     profiles = load_profiles_from_yaml(Path("config/profiles.yaml"))
@@ -31,13 +36,14 @@ async def _do_health(ctx: click.Context, agent: str | None, no_mcp: bool) -> Non
     temporal_status = "unknown"
     try:
         from orchestra.worker.registry import make_client
+
         client = await asyncio.wait_for(
             make_client(ctx.obj["host"], ctx.obj["namespace"]),
             timeout=3.0,
         )
         await client.service_client.close()
         temporal_status = "✓ connected"
-    except asyncio.TimeoutError:
+    except TimeoutError:
         temporal_status = "✗ timeout"
     except Exception as e:
         temporal_status = f"✗ {str(e)[:50]}"
@@ -48,9 +54,15 @@ async def _do_health(ctx: click.Context, agent: str | None, no_mcp: bool) -> Non
     # 2. Agent MCP 探针
     if no_mcp:
         for name, p in profiles.items():
-            rows.append({"agent": name, "role": p.role.value,
-                         "capabilities": ",".join(p.capabilities[:3]),
-                         "endpoint": p.mcpEndpoint, "status": "skipped"})
+            rows.append(
+                {
+                    "agent": name,
+                    "role": p.role.value,
+                    "capabilities": ",".join(p.capabilities[:3]),
+                    "endpoint": p.mcpEndpoint,
+                    "status": "skipped",
+                }
+            )
     else:
         from orchestra.adapters.mcp import MCPAdapter
 
@@ -60,13 +72,16 @@ async def _do_health(ctx: click.Context, agent: str | None, no_mcp: bool) -> Non
                 h = await asyncio.wait_for(adapter.check_health(), timeout=3.0)
                 await adapter.close()
                 status = f"✓ {h.status.value}"
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 status = "✗ timeout"
             except Exception as e:
                 status = f"✗ {type(e).__name__}"
-            return {"agent": name, "role": p.role.value,
-                    "capabilities": ",".join(p.capabilities[:3]),
-                    "status": status}
+            return {
+                "agent": name,
+                "role": p.role.value,
+                "capabilities": ",".join(p.capabilities[:3]),
+                "status": status,
+            }
 
         tasks = [check(name, p) for name, p in profiles.items()]
         rows = list(await asyncio.gather(*tasks))

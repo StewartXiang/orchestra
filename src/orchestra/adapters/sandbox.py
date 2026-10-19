@@ -86,9 +86,7 @@ class Sandbox:
 def _sanitize_path(path: str) -> str:
     """拒绝路径穿越攻击。"""
     if _PATH_TRAVERSAL_RE.search(path):
-        raise ToolNotAllowed(
-            f"路径参数包含穿越攻击模式: {path!r}"
-        )
+        raise ToolNotAllowed(f"路径参数包含穿越攻击模式: {path!r}")
     # 规范化（不跳出工作区）
     try:
         normalized = str(PurePosixPath(path))

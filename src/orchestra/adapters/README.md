@@ -18,7 +18,8 @@ Worker 与 Agent 之间的通信抽象层。统一封装 MCP 协议调用、健�
 ```python
 class AgentAdapter(Protocol):
     async def execute_task(
-        self, task: TaskInput,
+        self,
+        task: TaskInput,
         on_heartbeat: Callable[[ProgressInfo], None] | None = None,
         resume_from: Checkpoint | None = None,
     ) -> TaskOutput: ...

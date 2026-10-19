@@ -25,31 +25,32 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 def _temporal_available() -> bool:
     try:
         import temporalio.testing  # noqa: F401
+
         return True
     except ImportError:
         return False
 
 
-skip_no_temporal = pytest.mark.skipif(
-    not _temporal_available(),
-    reason="temporalio not installed"
-)
+skip_no_temporal = pytest.mark.skipif(not _temporal_available(), reason="temporalio not installed")
 
 
 def _get_data_converter():
     """若 pydantic_data_converter 可用则返回。"""
     try:
         from temporalio.contrib.pydantic import pydantic_data_converter  # type: ignore
+
         return pydantic_data_converter
     except ImportError:
         from temporalio.converter import DataConverter
+
         return DataConverter.default
 
 
 def _init_stores(tmp_path: Path) -> None:
-    from orchestra.state.idempotency import init_store
-    from orchestra.state.artifact_store import init_artifact_store
     from orchestra.observability.audit import init_audit_writer
+    from orchestra.state.artifact_store import init_artifact_store
+    from orchestra.state.idempotency import init_store
+
     # 负载测试用 memory 后端避免 SQLite 并发写争用
     init_store("memory")
     init_artifact_store(str(tmp_path / "artifacts"))
@@ -62,26 +63,35 @@ def _init_stores(tmp_path: Path) -> None:
 async def test_submission_latency(tmp_path):
     """提交 → Worker 收到任务的延迟 < 1s。"""
     from temporalio.testing import WorkflowEnvironment
-    from orchestra.schema.parser import parse_pipeline
-    from orchestra.workflows.pipeline_workflow import PipelineRunInput, PipelineWorkflow
+
     from orchestra.adapters.registry import build_registry, load_profiles_from_yaml
+    from orchestra.schema.parser import parse_pipeline
     from orchestra.worker.registry import build_worker
+    from orchestra.workflows.pipeline_workflow import PipelineRunInput, PipelineWorkflow
 
     _init_stores(tmp_path)
     profiles = load_profiles_from_yaml(Path("config/profiles.yaml"))
-    build_registry(profiles, use_mock=True, mock_outputs={
-        "walnut": {"patch": "ok"},
-        "almond": {"result": "pass", "coverage": 90.0},
-    })
+    build_registry(
+        profiles,
+        use_mock=True,
+        mock_outputs={
+            "walnut": {"patch": "ok"},
+            "almond": {"result": "pass", "coverage": 90.0},
+        },
+    )
     pipeline = parse_pipeline("examples/minimal.pipeline.yaml")
     pipeline_dict = pipeline.model_dump(by_alias=True)
 
-    async with await WorkflowEnvironment.start_time_skipping(data_converter=_get_data_converter()) as env:
+    async with await WorkflowEnvironment.start_time_skipping(
+        data_converter=_get_data_converter()
+    ) as env:
         async with build_worker(env.client, "test-queue"):
             t0 = time.monotonic()
             result = await env.client.execute_workflow(
                 PipelineWorkflow.run,
-                PipelineRunInput(pipeline_dict=pipeline_dict, run_id="lat-001", params={"task": "x"}),
+                PipelineRunInput(
+                    pipeline_dict=pipeline_dict, run_id="lat-001", params={"task": "x"}
+                ),
                 id="lat-test-001",
                 task_queue="test-queue",
                 execution_timeout=timedelta(seconds=5),
@@ -90,7 +100,7 @@ async def test_submission_latency(tmp_path):
 
     assert result["phase"] == "Succeeded"
     # 时间跳跃模式下 elapsed ≈ 实际 CPU 时间（≠ 模拟时间），正常会远 < 1s
-    print(f"\n  submission latency: {elapsed*1000:.1f}ms")
+    print(f"\n  submission latency: {elapsed * 1000:.1f}ms")
     assert elapsed < 5.0, f"实际执行时间 {elapsed:.2f}s 超过 5s（含 Worker 启动开销）"
 
 
@@ -100,7 +110,7 @@ async def test_submission_latency(tmp_path):
 @pytest.mark.xfail(
     strict=False,
     reason="Temporal time-skipping 并发环境下偶发 asyncio.TimeoutError，"
-           "在真实 Temporal Server 上稳定通过。CI 中标记 xfail 以避免虚假阻断。"
+    "在真实 Temporal Server 上稳定通过。CI 中标记 xfail 以避免虚假阻断。",
 )
 async def test_concurrent_100_workflows(tmp_path):
     """100 条并发流水线同时执行（mock Agent），全部在 30s 内完成。
@@ -110,23 +120,30 @@ async def test_concurrent_100_workflows(tmp_path):
     改用 asyncio.wait_for 包住整个 gather，保证测试不 hang。
     """
     from temporalio.testing import WorkflowEnvironment
-    from orchestra.schema.parser import parse_pipeline
-    from orchestra.workflows.pipeline_workflow import PipelineRunInput, PipelineWorkflow
+
     from orchestra.adapters.registry import build_registry, load_profiles_from_yaml
+    from orchestra.schema.parser import parse_pipeline
     from orchestra.worker.registry import build_worker
+    from orchestra.workflows.pipeline_workflow import PipelineRunInput, PipelineWorkflow
 
     _init_stores(tmp_path)
     profiles = load_profiles_from_yaml(Path("config/profiles.yaml"))
-    build_registry(profiles, use_mock=True, mock_outputs={
-        "walnut": {"patch": "ok"},
-        "almond": {"result": "pass", "coverage": 90.0},
-    })
+    build_registry(
+        profiles,
+        use_mock=True,
+        mock_outputs={
+            "walnut": {"patch": "ok"},
+            "almond": {"result": "pass", "coverage": 90.0},
+        },
+    )
     pipeline = parse_pipeline("examples/minimal.pipeline.yaml")
     pipeline_dict = pipeline.model_dump(by_alias=True)
 
     N = 10  # time-skipping 环境下 20 个并发常超过 60s，降至 10（生产基线另行测试）
 
-    async with await WorkflowEnvironment.start_time_skipping(data_converter=_get_data_converter()) as env:
+    async with await WorkflowEnvironment.start_time_skipping(
+        data_converter=_get_data_converter()
+    ) as env:
         async with build_worker(env.client, "test-queue", max_concurrent_activities=20):
             t0 = time.monotonic()
 
@@ -163,9 +180,10 @@ async def test_concurrent_100_workflows(tmp_path):
 @pytest.mark.load
 async def test_heartbeat_latency(tmp_path):
     """心跳上报延迟 < 100ms（Activity 层回调到 on_heartbeat 的 RTT）。"""
-    from orchestra.adapters.mock import MockAgentAdapter, MockBehavior
-    from orchestra.domain.state import TaskInput
     import statistics
+
+    from orchestra.adapters.mock import MockAgentAdapter
+    from orchestra.domain.state import TaskInput
 
     adapter = MockAgentAdapter("walnut", output={"patch": "ok"})
     latencies = []
@@ -183,9 +201,9 @@ async def test_heartbeat_latency(tmp_path):
         idempotency_key="hb-test/code",
     )
 
-    t0 = time.monotonic()
+    time.monotonic()
     await adapter.execute_task(task, on_heartbeat=on_hb)
-    t1 = time.monotonic()
+    time.monotonic()
 
     assert len(latencies) >= 2
     gaps = [latencies[i + 1] - latencies[i] for i in range(len(latencies) - 1)]
