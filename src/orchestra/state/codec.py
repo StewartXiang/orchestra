@@ -17,6 +17,7 @@ import base64
 import json
 import os
 import re
+from collections.abc import Sequence
 from typing import Any
 
 from temporalio.api.common.v1 import Payload
@@ -27,7 +28,7 @@ _SENSITIVE_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 _ENCRYPTION_ENCODING = "binary/encrypted"
-_ENCRYPTION_METADATA_KEY = b"encoding"
+_ENCRYPTION_METADATA_KEY = "encoding"
 
 
 class EncryptingCodec(PayloadCodec):
@@ -46,14 +47,14 @@ class EncryptingCodec(PayloadCodec):
         self._key = key
         self._enabled = bool(key) and len(key) == 32
 
-    async def encode(self, payloads: list[Payload]) -> list[Payload]:
+    async def encode(self, payloads: Sequence[Payload]) -> list[Payload]:
         if not self._enabled:
-            return payloads  # pass-through
+            return list(payloads)  # pass-through
         return [self._encrypt_payload(p) if self._should_encrypt(p) else p for p in payloads]
 
-    async def decode(self, payloads: list[Payload]) -> list[Payload]:
+    async def decode(self, payloads: Sequence[Payload]) -> list[Payload]:
         if not self._enabled:
-            return payloads  # pass-through
+            return list(payloads)  # pass-through
         return [self._decrypt_payload(p) if self._is_encrypted(p) else p for p in payloads]
 
     def _should_encrypt(self, payload: Payload) -> bool:
@@ -75,7 +76,7 @@ class EncryptingCodec(PayloadCodec):
         return False
 
     def _encrypt_payload(self, payload: Payload) -> Payload:
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # type: ignore[import-untyped]
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
         aesgcm = AESGCM(self._key)
         nonce = os.urandom(12)
@@ -91,7 +92,7 @@ class EncryptingCodec(PayloadCodec):
         return enc == _ENCRYPTION_ENCODING.encode()
 
     def _decrypt_payload(self, payload: Payload) -> Payload:
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # type: ignore[import-untyped]
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
         raw = base64.b64decode(payload.data)
         nonce, ciphertext = raw[:12], raw[12:]

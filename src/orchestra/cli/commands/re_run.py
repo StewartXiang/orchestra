@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import click
 
@@ -47,47 +48,76 @@ def re_run(ctx: click.Context, workflow_id: str, from_stage: str, yes: bool) -> 
             click_echo("  已取消")
             return
 
+        def _find_stage_scheduled_id(events: list[Any], stage: str) -> int | None:
+            """找到目标 stage 的 activity_task_scheduled 事件 id（按 ActivityInput.stage_name）。"""
+            import json
+
+            for event in events:
+                if not event.HasField("activity_task_scheduled"):
+                    continue
+                attrs = event.activity_task_scheduled_event_attributes
+                if attrs.activity_type.name != "execute_agent_task":
+                    continue
+                try:
+                    payload = json.loads(attrs.input.payloads[0].data.decode())
+                except Exception:
+                    continue
+                if payload.get("stage_name") == stage:
+                    return int(event.event_id)
+            return None
+
+        def _next_task_completed_after(events: list[Any], event_id: int) -> int | None:
+            for event in events:
+                if event.event_id > event_id and event.HasField("workflow_task_completed"):
+                    return int(event.event_id)
+            return None
+
+        def _first_task_completed(events: list[Any]) -> int | None:
+            for event in events:
+                if event.HasField("workflow_task_completed"):
+                    return int(event.event_id)
+            return None
+
+        async def _reset(reset_event_id: int) -> None:
+            """调用 workflow_service.reset_workflow_execution（WorkflowHandle 无 reset API）。"""
+            from temporalio.api.common.v1 import WorkflowExecution
+            from temporalio.api.workflowservice.v1 import ResetWorkflowExecutionRequest
+
+            await client.workflow_service.reset_workflow_execution(
+                ResetWorkflowExecutionRequest(
+                    namespace=client.namespace,
+                    workflow_execution=WorkflowExecution(
+                        workflow_id=workflow_id, run_id=desc.run_id
+                    ),
+                    reason="orchestra re-run",
+                    # Temporal Reset 语义：重置到该 WorkflowTask 完成后
+                    workflow_task_finish_event_id=reset_event_id,
+                )
+            )
+
         try:
+            history = await handle.fetch_history()
+            events = list(history.events)
+
             if from_stage:
-                # 从指定 stage 重置：找到对应 Activity 的完成事件，重置到其后
-                # Temporal Reset 到特定 event_id
-                history = await handle.fetch_history()
-
-                # 寻找 from_stage 的第一个 Activity 完成事件
-                target_event_id: int | None = None
-                for event in history.events:
-                    if event.HasField("activity_task_completed"):
-                        attrs = event.activity_task_completed_event_attributes
-                        if attrs.activity_type.name == "execute_agent_task":
-                            # 通过 input payload 判断 stage 名称（简化：查 workflow task completed）
-                            target_event_id = event.event_id
-                            # 继续搜索匹配 stage 名称的
-                            import json
-
-                            try:
-                                input_data = json.loads(attrs.result.payloads[0].data.decode())
-                                if input_data.get("stage_name") == from_stage:
-                                    break
-                            except Exception:
-                                pass
-
-                if target_event_id is None:
-                    error(f"未找到 stage '{from_stage}' 的完成事件，将从头重跑")
-                    await handle.reset()
+                scheduled_id = _find_stage_scheduled_id(events, from_stage)
+                if scheduled_id is None:
+                    error(f"未找到 stage '{from_stage}' 的调度事件，将从头重跑")
+                    reset_event_id = _first_task_completed(events)
                 else:
-                    # 重置到该 event 之后（重跑后续 stage）
-                    from temporalio.common import ResetConfig, ResetReapplyType
-
-                    await handle.reset(
-                        ResetConfig(
-                            to_existing_event_id=target_event_id,
-                            reset_reapply_type=ResetReapplyType.SIGNAL,
-                        )
-                    )
-                click_echo(f"✓ workflow 已重置（from stage={from_stage}）")
+                    reset_event_id = _next_task_completed_after(
+                        events, scheduled_id
+                    ) or _first_task_completed(events)
             else:
-                await handle.reset()
-                click_echo("✓ workflow 已重置（从头重跑）")
+                reset_event_id = _first_task_completed(events)
+
+            if reset_event_id is None:
+                error("找不到可重置的 workflow task 事件")
+                return
+
+            await _reset(reset_event_id)
+            scope = f"from stage={from_stage}" if from_stage else "from start"
+            click_echo(f"✓ workflow 已重置（{scope}）")
         except Exception as e:
             error(f"重跑失败: {e}")
             click_echo(

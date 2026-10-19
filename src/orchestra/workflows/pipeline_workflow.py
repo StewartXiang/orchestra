@@ -110,8 +110,7 @@ class PipelineWorkflow(
             }
         )
         # 检查是否达到 policy 要求
-        approval = self._get_stage_approval(stage_name)
-        if approval and self._check_approval_policy(stage_name, approval):
+        if self._check_approval_policy(stage_name):
             self._approval_state[stage_name]["status"] = "approved"
 
         return ApproveResult(approved_at=str(workflow.now()), approver=upd.approver)

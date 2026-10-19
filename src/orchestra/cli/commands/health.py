@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import click
 
@@ -37,11 +38,11 @@ async def _do_health(ctx: click.Context, agent: str | None, no_mcp: bool) -> Non
     try:
         from orchestra.worker.registry import make_client
 
-        client = await asyncio.wait_for(
+        # 仅验证可达性；Client/ServiceClient 无 public close（进程退出即释放连接）
+        _client = await asyncio.wait_for(
             make_client(ctx.obj["host"], ctx.obj["namespace"]),
             timeout=3.0,
         )
-        await client.service_client.close()
         temporal_status = "✓ connected"
     except TimeoutError:
         temporal_status = "✗ timeout"
@@ -66,7 +67,7 @@ async def _do_health(ctx: click.Context, agent: str | None, no_mcp: bool) -> Non
     else:
         from orchestra.adapters.mcp import MCPAdapter
 
-        async def check(name, p):
+        async def check(name: str, p: Any) -> dict[str, Any]:
             try:
                 adapter = MCPAdapter(name, p.mcpEndpoint, p.tools or [], role=p.role)
                 h = await asyncio.wait_for(adapter.check_health(), timeout=3.0)

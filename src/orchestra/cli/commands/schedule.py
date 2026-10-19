@@ -4,19 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import click
 
 from ..output import click_echo, error
 
 if TYPE_CHECKING:
-    import temporalio.common
+    import temporalio.client
 
 
-def _parse_cron(expr: str) -> temporalio.common.ScheduleCalendarSpec | None:
+def _parse_cron(expr: str) -> temporalio.client.ScheduleCalendarSpec | None:
     """解析 cron 表达式为 Temporal ScheduleSpec。"""
-    from temporalio.common import ScheduleCalendarSpec, ScheduleRange
+    from temporalio.client import ScheduleCalendarSpec, ScheduleRange
 
     parts = expr.strip().split()
     if len(parts) != 5:
@@ -52,11 +52,11 @@ def schedule() -> None:
 @click.option("--cron", required=True, help="5 字段 cron 表达式（分 时 日 月 周）")
 @click.option("--param", "-p", multiple=True, metavar="KEY=VALUE")
 @click.pass_context
-def create(ctx: click.Context, pipeline_file: str, cron: str, param: tuple) -> None:
+def create(ctx: click.Context, pipeline_file: str, cron: str, param: tuple[str, ...]) -> None:
     """创建定时 Schedule。"""
 
     async def _create() -> None:
-        from temporalio.common import (
+        from temporalio.client import (
             Schedule,
             ScheduleActionStartWorkflow,
             ScheduleSpec,
@@ -75,7 +75,7 @@ def create(ctx: click.Context, pipeline_file: str, cron: str, param: tuple) -> N
         client = await get_client(ctx.obj["host"], ctx.obj["namespace"])
         pipeline = parse_pipeline(pipeline_file)
 
-        params: dict = {}
+        params: dict[str, Any] = {}
         for p in param:
             k, _, v = p.partition("=")
             params[k.strip()] = v.strip()

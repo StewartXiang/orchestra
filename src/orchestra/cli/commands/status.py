@@ -22,7 +22,13 @@ def status(
     asyncio.run(_do_status(ctx, pipeline_id, watch, show_approvals, query_name))
 
 
-async def _do_status(ctx, pipeline_id, watch, show_approvals, query_name):
+async def _do_status(
+    ctx: click.Context,
+    pipeline_id: str,
+    watch: bool,
+    show_approvals: bool,
+    query_name: str,
+) -> None:
     try:
         from orchestra.worker.registry import make_client
 
@@ -40,7 +46,7 @@ async def _do_status(ctx, pipeline_id, watch, show_approvals, query_name):
     if not pipeline_id:
         # 列出最近流水线
         try:
-            workflows = await client.list_workflows("ExecutionStatus='Running'")
+            workflows = client.list_workflows("ExecutionStatus='Running'")
             rows = []
             async for wf in workflows:
                 rows.append(
@@ -65,7 +71,7 @@ async def _do_status(ctx, pipeline_id, watch, show_approvals, query_name):
 
     handle = client.get_workflow_handle(pipeline_id)
 
-    async def _show():
+    async def _show() -> None:
         try:
             desc = await handle.describe()
             info = {

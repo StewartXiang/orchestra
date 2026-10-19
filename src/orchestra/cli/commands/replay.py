@@ -17,16 +17,23 @@ def replay(ctx: click.Context, pipeline_id: str, history_file: str) -> None:
 
     async def _replay() -> None:
         if history_file:
-            import json
+            from pathlib import Path
 
-            from temporalio.testing import WorkflowReplayer
+            from temporalio.client import WorkflowHistory
+            from temporalio.worker import Replayer
 
+            from orchestra.worker.registry import build_workflow_runner
             from orchestra.workflows import PipelineWorkflow
 
             with open(history_file) as f:
-                history = json.loads(f.read())
-            replayer = WorkflowReplayer(workflows=[PipelineWorkflow])
-            await replayer.replay_workflow(history)
+                history = WorkflowHistory.from_json(Path(history_file).stem, f.read())
+            # 必须复用 Worker 的 runner，否则沙箱不一致会误报 NondeterminismError
+            result = await Replayer(
+                workflows=[PipelineWorkflow],
+                workflow_runner=build_workflow_runner(),
+            ).replay_workflow(history)
+            if result.replay_failure is not None:
+                raise result.replay_failure
             click_echo(f"✓ Replay passed for history: {history_file}")
         else:
             click_echo(

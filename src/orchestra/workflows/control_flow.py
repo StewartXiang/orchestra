@@ -178,11 +178,7 @@ class ControlFlowMixin(PipelineWorkflowBase):
 
         self._phase = Phase.RUNNING
 
-    def _get_stage_approval(self, stage_name: str) -> Any:
-        pipeline_stages = {}
-        return pipeline_stages.get(stage_name)
-
-    def _check_approval_policy(self, stage_name: str, approval: Any) -> bool:
+    def _check_approval_policy(self, stage_name: str) -> bool:
         approvals = self._approval_state.get(stage_name, {}).get("approvals", [])
         return len(approvals) >= 1  # 简化：至少一个审批
 

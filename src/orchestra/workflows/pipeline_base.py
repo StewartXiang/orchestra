@@ -2,7 +2,7 @@
 """PipelineWorkflow 各执行体 Mixin 的共享基类。
 
 仅承载**类型信息**：实例状态声明 + 跨 Mixin 方法签名。运行时这些方法都由具体
-Mixin 覆盖（``PipelineWorkflowBase`` 在 MRO 末尾），基类里的 ``...`` 体永不执行。
+Mixin 覆盖（``PipelineWorkflowBase`` 在 MRO 末尾），基类里的桩实现永不执行（都会被具体 Mixin 覆盖）。
 
 为什么需要它：拆分后各 Mixin 会互相调用（如 ``ControlFlowMixin._run_loop`` 调
 ``StageExecutionMixin._execute_stage``），mypy --strict 需要在这些方法所属的类上
@@ -35,7 +35,8 @@ class PipelineWorkflowBase:
     _completed_count: int
 
     # ---------- stage_execution ----------
-    async def _resolve_agent_selector(self, stage: Stage) -> tuple[str, str | None]: ...
+    async def _resolve_agent_selector(self, stage: Stage) -> tuple[str, str | None]:
+        raise NotImplementedError
 
     async def _execute_stage(
         self,
@@ -45,12 +46,14 @@ class PipelineWorkflowBase:
         *,
         resolved_agent: str | None = None,
         resolved_queue: str | None = None,
-    ) -> StageOutput: ...
+    ) -> StageOutput:
+        raise NotImplementedError
 
     # ---------- dynamic_execution ----------
     async def _execute_dynamic(
         self, stage: Stage, inp: PipelineRunInput, global_: GlobalSpec
-    ) -> list[Any]: ...
+    ) -> list[Any]:
+        raise NotImplementedError
 
     # ---------- review_gate ----------
     async def _run_review_gate(
@@ -59,7 +62,8 @@ class PipelineWorkflowBase:
         stage_map: dict[str, Stage],
         inp: PipelineRunInput,
         global_: GlobalSpec,
-    ) -> None: ...
+    ) -> None:
+        raise NotImplementedError
 
     # ---------- control_flow ----------
     async def _run_loop(
@@ -68,13 +72,17 @@ class PipelineWorkflowBase:
         stage_map: dict[str, Stage],
         inp: PipelineRunInput,
         global_: GlobalSpec,
-    ) -> None: ...
+    ) -> None:
+        raise NotImplementedError
 
-    async def _run_child_workflow(self, stage: Stage, inp: PipelineRunInput) -> Any: ...
+    async def _run_child_workflow(self, stage: Stage, inp: PipelineRunInput) -> Any:
+        raise NotImplementedError
 
-    async def _run_approval(self, stage: Stage, inp: PipelineRunInput) -> None: ...
+    async def _run_approval(self, stage: Stage, inp: PipelineRunInput) -> None:
+        raise NotImplementedError
 
-    async def _run_compensation(self, inp: PipelineRunInput, comp: Compensation | None) -> None: ...
+    async def _run_compensation(self, inp: PipelineRunInput, comp: Compensation | None) -> None:
+        raise NotImplementedError
 
     async def _notify(
         self,
@@ -82,11 +90,14 @@ class PipelineWorkflowBase:
         event: str,
         global_: GlobalSpec,
         error: str | None = None,
-    ) -> None: ...
+    ) -> None:
+        raise NotImplementedError
 
-    def _get_state(self, path: str) -> Any: ...
+    def _get_state(self, path: str) -> Any:
+        raise NotImplementedError
 
-    def _set_state(self, path: str, value: Any) -> None: ...
+    def _set_state(self, path: str, value: Any) -> None:
+        raise NotImplementedError
 
     def _should_skip_stage(
         self,
@@ -94,8 +105,8 @@ class PipelineWorkflowBase:
         stage_name: str,
         failed_stages: list[str],
         skipped_stages: list[str],
-    ) -> bool: ...
+    ) -> bool:
+        raise NotImplementedError
 
-    def _get_stage_approval(self, stage_name: str) -> Any: ...
-
-    def _check_approval_policy(self, stage_name: str, approval: Any) -> bool: ...
+    def _check_approval_policy(self, stage_name: str) -> bool:
+        raise NotImplementedError
