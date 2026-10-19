@@ -36,6 +36,14 @@
   `if activity.is_cancelled():` 块内 import，循环内再次 `raise` 时该局部名未绑定。
   改为模块顶层 import。
 - 清理未使用 import（`child_workflows` / `signals` / `control_flow`）。
+- **CI 从未被触发**：`ci.yml` 的 `on.push/pull_request` 只写 `[main, develop]`，而仓库
+  默认分支是 `master`，Actions 中除 dependabot 外 **0 次运行**。已把 `master` 纳入触发
+  范围，并修掉两个从未跑过的 job：
+  - `integration`：去掉 `temporalio/auto-setup` service container —— 集成测试用进程内
+    `WorkflowEnvironment.start_time_skipping()`，不需要外部 Server，而该镜像里已无
+    `tctl`，健康检查必然失败；
+  - `deploy-config`：`uses: docker://prom/prometheus` 会把 `promtool ...` 当成
+    `/bin/prometheus` 的参数，改为 `docker run --entrypoint promtool`。
 
 ### Added
 - `tests/integration/test_workflow_review_gate.py`：Review Gate 三条路径

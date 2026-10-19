@@ -98,23 +98,15 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     needs: [unit]
-    services:
-      temporal:
-        image: temporalio/auto-setup:1.24
-        ports: ["7233:7233"]
-        env:
-          DB: sqlite
-        options: >-
-          --health-cmd "tctl --address localhost:7233 cluster health || exit 1"
-          --health-interval 10s --health-timeout 5s --health-retries 12
+    # 集成测试用 temporalio.testing.WorkflowEnvironment.start_time_skipping()
+    # 在进程内跑真实 Workflow，**不需要外部 Temporal Server**，因此不再起
+    # temporalio/auto-setup service container（它的 tctl 健康检查在该镜像里已不存在）。
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
       - run: uv python install ${{ env.PYTHON_VERSION }}
       - run: uv sync --all-extras
-      - name: Pytest integration (mock Adapter)
-        env:
-          TEMPORAL_HOST: localhost:7233
+      - name: Pytest integration (in-process Temporal, mock Adapter)
         run: uv run pytest tests/integration -v -m integration
 
   deploy-config:
@@ -124,6 +116,9 @@ jobs:
       - name: docker compose config
         run: docker compose -f deploy/docker-compose.yml config > /dev/null
       - name: Validate Prometheus rules
-        uses: docker://prom/prometheus:v2.51.0
-        with:
-          args: promtool check rules /github/workspace/deploy/prometheus/alerts.yaml
+        # 不能用 `uses: docker://prom/prometheus`：该镜像 ENTRYPOINT 是 /bin/prometheus，
+        # args 会被当成 prometheus 的参数而不是 promtool 子命令。显式覆盖 entrypoint。
+        run: |
+          docker run --rm --entrypoint promtool \
+            -v "$PWD/deploy/prometheus:/prometheus-rules:ro" \
+            prom/prometheus:v2.51.0 check rules /prometheus-rules/alerts.yaml
