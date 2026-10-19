@@ -86,6 +86,19 @@ class TestReviewIssue:
                 problem="bad",
             )
 
+    def test_area_is_optional_per_documented_schema(self) -> None:
+        """area 非必填 —— 与 config/review-schema.yaml / design.md 的 required 列表一致。"""
+        issue = ReviewIssue.model_validate(
+            {"id": "a-001", "severity": "P1", "owner": "tester", "problem": "缺 case"}
+        )
+        assert issue.area is None
+        assert issue.id == "a-001"
+
+    def test_missing_documented_required_field_raises(self) -> None:
+        """文档 required 列表中的字段缺失必须拒绝。"""
+        with pytest.raises(ValueError):
+            ReviewIssue.model_validate({"id": "a-002", "severity": "P1", "problem": "缺 owner"})
+
 
 class TestReviewResult:
     def test_pass_verdict(self) -> None:

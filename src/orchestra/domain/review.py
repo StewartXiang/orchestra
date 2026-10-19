@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class ReviewSeverity(str, Enum):
     """问题严重程度。P0=阻断 P1=严重 P2=一般 P3=建议。"""
+
     P0 = "P0"
     P1 = "P1"
     P2 = "P2"
@@ -26,6 +27,7 @@ class ReviewSeverity(str, Enum):
 
 class ReviewArea(str, Enum):
     """问题所属领域。"""
+
     gameplay = "gameplay"
     visual = "visual"
     ui = "ui"
@@ -37,12 +39,14 @@ class ReviewArea(str, Enum):
 
 class ReviewVerdict(str, Enum):
     """评审结论：通过或驳回。"""
+
     PASS = "pass"
     FAIL = "fail"
 
 
 class ReviewOwner(str, Enum):
     """问题路由目标角色。"""
+
     developer = "developer"
     designer = "designer"
     tester = "tester"
@@ -50,13 +54,18 @@ class ReviewOwner(str, Enum):
 
 
 class ReviewIssue(BaseModel):
-    """单条评审问题。``owner`` 决定路由目标，``severity`` 决定优先级。"""
+    """单条评审问题。``owner`` 决定路由目标，``severity`` 决定优先级。
+
+    ``area`` 为可选的辅助分类：config/review-schema.yaml 与 design.md 的
+    required 列表均为 ``[id, severity, owner, problem]``，故此处默认 None。
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     id: str
     severity: ReviewSeverity
     owner: ReviewOwner
-    area: ReviewArea
+    area: ReviewArea | None = None
     problem: str
     suggestion: str | None = None
     acceptance: list[str] | None = None
@@ -64,6 +73,7 @@ class ReviewIssue(BaseModel):
 
 class ReviewResult(BaseModel):
     """结构化评审结果。Pipeline 通过 verdict 做门禁决策。"""
+
     model_config = ConfigDict(extra="forbid")
 
     verdict: ReviewVerdict
@@ -78,6 +88,7 @@ class ReviewGate(BaseModel):
     将 review agent + issue routing + retest + iteration 打包为
     一等概念。对齐 design.md §"Review Gate"。
     """
+
     model_config = ConfigDict(extra="forbid")
 
     agent: str | None = None
