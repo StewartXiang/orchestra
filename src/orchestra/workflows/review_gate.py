@@ -9,6 +9,7 @@ from datetime import timedelta
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
+from .pipeline_base import PipelineWorkflowBase
 from .pipeline_types import PipelineRunInput
 
 with workflow.unsafe.imports_passed_through():
@@ -16,7 +17,7 @@ with workflow.unsafe.imports_passed_through():
     from ..domain.pipeline import GlobalSpec, Stage
 
 
-class ReviewGateMixin:
+class ReviewGateMixin(PipelineWorkflowBase):
     async def _run_review_gate(
         self,
         stage: Stage,

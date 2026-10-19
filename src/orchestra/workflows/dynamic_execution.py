@@ -10,6 +10,7 @@ from typing import Any
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
+from .pipeline_base import PipelineWorkflowBase
 from .pipeline_types import PipelineRunInput
 from .workflow_utils import parse_duration
 
@@ -19,7 +20,7 @@ with workflow.unsafe.imports_passed_through():
     from ..domain.state import StageOutput, TaskInput
 
 
-class DynamicExecutionMixin:
+class DynamicExecutionMixin(PipelineWorkflowBase):
     async def _execute_dynamic(
         self,
         stage: Stage,

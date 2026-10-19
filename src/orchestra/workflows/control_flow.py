@@ -11,6 +11,7 @@ from typing import Any
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
+from .pipeline_base import PipelineWorkflowBase
 from .pipeline_types import PipelineRunInput
 from .workflow_utils import parse_duration
 
@@ -21,7 +22,7 @@ with workflow.unsafe.imports_passed_through():
     from ..domain.pipeline import Compensation, GlobalSpec, Stage
 
 
-class ControlFlowMixin:
+class ControlFlowMixin(PipelineWorkflowBase):
     async def _run_loop(
         self,
         stage: Stage,

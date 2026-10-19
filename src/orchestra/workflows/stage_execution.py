@@ -9,6 +9,7 @@ from datetime import timedelta
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
+from .pipeline_base import PipelineWorkflowBase
 from .pipeline_types import PipelineRunInput
 from .workflow_utils import parse_duration
 
@@ -18,7 +19,7 @@ with workflow.unsafe.imports_passed_through():
     from ..domain.state import StageOutput, TaskInput
 
 
-class StageExecutionMixin:
+class StageExecutionMixin(PipelineWorkflowBase):
     async def _resolve_agent_selector(
         self,
         stage: Stage,
